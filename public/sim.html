@@ -811,6 +811,8 @@ const net = {
     const p = this.peers.get(id);
     if (!p || !d) return;
     const dist = Math.hypot(p.x - player.pos.x, p.z - player.pos.z);
+    // another cow just scored somewhere: refresh the board once its claim has landed
+    clearTimeout(this.boardSoon); this.boardSoon = setTimeout(loadBoard, 1500);
     if (d.t === 'moo') {
       cowMoo(p.cow, Math.max(0.04, 0.35 - dist / 120));
       const k = noteMoo(id);
