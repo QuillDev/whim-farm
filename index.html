@@ -46,6 +46,12 @@
   button:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
   #feed { background: var(--hay); }
   #moo { background: #fff; }
+  a.play {
+    display: inline-block; margin-top: 18px; font-weight: 800; font-size: 1.15rem; padding: 12px 22px;
+    border-radius: 14px; border: 3px solid var(--ink); background: var(--barn); color: var(--paper);
+    text-decoration: none; box-shadow: 0 4px 0 var(--ink);
+  }
+  a.play:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
   .counter { margin-top: 20px; font-size: 1.1rem; }
   .counter b { font-size: 2.2rem; display: block; font-variant-numeric: tabular-nums; }
   .hay-pile { min-height: 1.6em; font-size: 1.4rem; letter-spacing: 2px; margin-top: 4px; word-break: break-all; }
@@ -122,6 +128,7 @@
     <button id="moo" type="button">moo</button>
     <button id="feed" type="button">give hay</button>
   </div>
+  <a class="play" href="sim.html">be cow1 (3d)</a>
 
   <div class="counter">
     <b id="hay">0</b>

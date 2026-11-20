@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>be cow1 · whim.farm</title>
+<meta name="description" content="first-person cow simulator. you are cow1. eat hay, moo, pay down the lease.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐄</text></svg>">
+<style>
+  :root { --ink: #2b2a28; --paper: #fffdf7; --hay: #e8c25a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd0ff; }
+  body { font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; }
+  .hud { position: fixed; top: 12px; left: 12px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; font-size: .95rem; line-height: 1.35; pointer-events: none; font-variant-numeric: tabular-nums; }
+  .hud b { font-weight: 800; }
+  .back { position: fixed; top: 12px; right: 12px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; color: var(--ink); text-decoration: none; font-weight: 800; }
+  .prompt { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); background: var(--hay); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 14px; font-weight: 800; display: none; pointer-events: none; white-space: nowrap; }
+  .prompt.show { display: block; }
+  .toast { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); font-weight: 800; font-size: 1.4rem; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 6px 14px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
+  .toast.show { opacity: 1; }
+  .cross { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.35); pointer-events: none; }
+  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(30, 40, 20, .45); }
+  .overlay.hidden { display: none; }
+  .card { background: var(--paper); border: 3px solid var(--ink); border-radius: 18px; padding: 22px 24px; max-width: 380px; margin: 16px; text-align: center; box-shadow: 0 6px 0 var(--ink); }
+  .card h1 { margin: 0 0 6px; font-size: 2rem; }
+  .card p { margin: 6px 0; }
+  .card .keys { font-size: .95rem; opacity: .8; }
+  button { font: inherit; font-weight: 800; font-size: 1.15rem; padding: 12px 22px; border-radius: 14px; border: 3px solid var(--ink); background: var(--hay); color: var(--ink); cursor: pointer; box-shadow: 0 4px 0 var(--ink); margin-top: 10px; }
+  button:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+  .touch { display: none; }
+  .is-touch .touch { display: block; }
+  .is-touch .cross, .is-touch .desk { display: none; }
+  .stick { position: fixed; left: 24px; bottom: 24px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,253,247,.35); border: 3px solid rgba(43,42,40,.6); }
+  .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: var(--paper); border: 3px solid var(--ink); }
+  .tbtns { position: fixed; right: 20px; bottom: 28px; display: flex; flex-direction: column; gap: 12px; }
+  .tbtns button { margin: 0; min-width: 84px; }
+  .tbtns #tmoo { background: #fff; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div class="hud" id="hud"></div>
+<a class="back" href="./">back to the farm</a>
+<div class="cross" id="cross"></div>
+<div class="prompt" id="prompt"></div>
+<div class="toast" id="toast"></div>
+
+<div class="touch">
+  <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
+  <div class="tbtns">
+    <button id="teat" type="button">eat</button>
+    <button id="tmoo" type="button">moo</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="card">
+    <h1>be cow1</h1>
+    <p>you are cow1. the pasture is yours. the hay is a lease payment.</p>
+    <p class="keys desk">wasd or arrows to walk, mouse to look, shift to trot, e to eat hay, space or m to moo. esc to stop.</p>
+    <p class="keys touch">left stick to walk, drag to look, buttons to eat and moo.</p>
+    <button id="start" type="button">start grazing</button>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+if (isTouch) document.body.classList.add('is-touch');
+
+// ---------- shared hay counter + lease math (same as the home page) ----------
+const KEY = 'cow1-hay';
+let hay = Number(localStorage.getItem(KEY) || 0);
+const P = 200, N = 60, R = 0.06 / 12;
+const PV = P * (1 - Math.pow(1 + R, -N)) / R;
+const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function liability(k) {
+  k = Math.min(k, N);
+  const g = Math.pow(1 + R, k);
+  return Math.max(0, PV * g - P * (g - 1) / R);
+}
+const hud = document.getElementById('hud');
+function renderHud() {
+  const paid = Math.min(hay, N);
+  hud.innerHTML = `<b>cow1</b> · hay eaten <b>${hay.toLocaleString()}</b><br>lease liability <b>${usd(liability(hay))}</b>` +
+    (paid >= N ? '<br>lease paid off. still leased somehow.' : `<br>${paid} of ${N} hay payments made`);
+}
+renderHud();
+
+// ---------- sound ----------
+let actx;
+const audio = () => (actx = actx || new (window.AudioContext || window.webkitAudioContext)());
+function mooSound(pitch = 1, vol = 0.35) {
+  try {
+    const ctx = audio(), t = ctx.currentTime, dur = 1.1;
+    const f = ctx.createBiquadFilter(), g = ctx.createGain();
+    for (const d of [0, 1.5]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime((130 + d) * pitch, t);
+      o.frequency.linearRampToValueAtTime((165 + d) * pitch, t + 0.25);
+      o.frequency.linearRampToValueAtTime((110 + d) * pitch, t + dur);
+      o.connect(f); o.start(t); o.stop(t + dur);
+    }
+    f.type = 'lowpass'; f.Q.value = 6;
+    f.frequency.setValueAtTime(400, t);
+    f.frequency.linearRampToValueAtTime(1100, t + 0.3);
+    f.frequency.linearRampToValueAtTime(350, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.12);
+    g.gain.setValueAtTime(vol, t + dur - 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    f.connect(g); g.connect(ctx.destination);
+  } catch (e) { /* no audio, still a cow */ }
+}
+function crunchSound() {
+  try {
+    const ctx = audio(), t0 = ctx.currentTime;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.12, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    for (let i = 0; i < 4; i++) {
+      const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      s.buffer = buf; f.type = 'bandpass'; f.frequency.value = 1800 + Math.random() * 1500; g.gain.value = 0.25;
+      s.connect(f); f.connect(g); g.connect(ctx.destination); s.start(t0 + i * 0.28);
+    }
+  } catch (e) {}
+}
+
+// ---------- scene ----------
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ antialias: true }); }
+catch (e) {
+  document.querySelector('.card').innerHTML = '<h1>no 3d here</h1><p>this browser has webgl turned off, so cow1 can\'t render. try another browser.</p><button onclick="location.href=\'./\'">back to the farm</button>';
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const SKY = new THREE.Color('#bfe3ff');
+scene.fog = new THREE.Fog(SKY, 60, 190);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 400);
+camera.rotation.order = 'YXZ';
+scene.add(camera);
+
+// sky dome
+scene.add(new THREE.Mesh(
+  new THREE.SphereGeometry(300, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, fog: false, depthWrite: false,
+    uniforms: { top: { value: new THREE.Color('#5fa8f0') }, bottom: { value: SKY } },
+    vertexShader: 'varying vec3 p; void main(){ p = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying vec3 p; void main(){ gl_FragColor = vec4(mix(bottom, top, clamp(p.y*1.6,0.0,1.0)),1.0); }',
+  })
+));
+
+scene.add(new THREE.HemisphereLight('#dff1ff', '#5d8a3c', 1.1));
+const sun = new THREE.DirectionalLight('#fff4dc', 2.2);
+sun.position.set(40, 60, 25);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 160 });
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+const mat = c => new THREE.MeshLambertMaterial({ color: c });
+const box = (w, h, d, m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.castShadow = o.receiveShadow = true; return o; };
+
+// ground
+const groundGeo = new THREE.PlaneGeometry(420, 420, 84, 84);
+groundGeo.rotateX(-Math.PI / 2);
+{
+  const pos = groundGeo.attributes.position, cols = [];
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), r = Math.hypot(x, z);
+    if (r > 70) pos.setY(i, (Math.sin(x * 0.03) + Math.cos(z * 0.025)) * Math.min(1, (r - 70) / 60) * 9);
+    c.setHSL(0.27 + Math.random() * 0.03, 0.5, 0.38 + Math.random() * 0.06);
+    cols.push(c.r, c.g, c.b);
+  }
+  groundGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  groundGeo.computeVertexNormals();
+}
+const ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+ground.receiveShadow = true;
+scene.add(ground);
+
+// grass tufts
+const FENCE = 45;
+{
+  const n = isTouch ? 3500 : 9000;
+  const geo = new THREE.ConeGeometry(0.06, 0.55, 3); geo.translate(0, 0.27, 0);
+  const grass = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial(), n);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    p.set((Math.random() * 2 - 1) * 75, 0, (Math.random() * 2 - 1) * 75);
+    e.set((Math.random() - .5) * .5, Math.random() * 6.28, (Math.random() - .5) * .5);
+    const h = 0.6 + Math.random() * 0.9; s.set(1, h, 1);
+    grass.setMatrixAt(i, m.compose(p, q.setFromEuler(e), s));
+    grass.setColorAt(i, c.setHSL(0.24 + Math.random() * 0.07, 0.55, 0.32 + Math.random() * 0.15));
+  }
+  scene.add(grass);
+}
+
+// flowers
+{
+  const geo = new THREE.SphereGeometry(0.09, 6, 4);
+  const cols = ['#ffffff', '#ffe066', '#ff9ec7', '#c9a0ff'];
+  for (const col of cols) {
+    const n = 120, im = new THREE.InstancedMesh(geo, mat(col), n), m = new THREE.Matrix4();
+    for (let i = 0; i < n; i++) im.setMatrixAt(i, m.makeTranslation((Math.random() * 2 - 1) * FENCE, 0.35, (Math.random() * 2 - 1) * FENCE));
+    scene.add(im);
+  }
+}
+
+// fence
+{
+  const wood = mat('#8a5a35');
+  const postGeo = new THREE.BoxGeometry(0.25, 1.6, 0.25);
+  const posts = [];
+  for (let t = -FENCE; t <= FENCE; t += 3) posts.push([t, -FENCE], [t, FENCE], [-FENCE, t], [FENCE, t]);
+  const im = new THREE.InstancedMesh(postGeo, wood, posts.length), m = new THREE.Matrix4();
+  posts.forEach(([x, z], i) => im.setMatrixAt(i, m.makeTranslation(x, 0.8, z)));
+  im.castShadow = true; scene.add(im);
+  for (const y of [0.6, 1.25]) {
+    for (const z of [-FENCE, FENCE]) { const r = box(FENCE * 2, 0.14, 0.08, wood); r.position.set(0, y, z); scene.add(r); }
+    for (const x of [-FENCE, FENCE]) { const r = box(0.08, 0.14, FENCE * 2, wood); r.position.set(x, y, 0); scene.add(r); }
+  }
+}
+
+// barn
+const BARN = { x: -18, z: -30, w: 14, d: 11, h: 7 };
+{
+  const g = new THREE.Group(); g.position.set(BARN.x, 0, BARN.z);
+  const red = mat('#b8432f'), white = mat('#fbf6ea'), roofM = mat('#5a2a22');
+  const walls = box(BARN.w, BARN.h, BARN.d, red); walls.position.y = BARN.h / 2; g.add(walls);
+  const tri = new THREE.Shape(); tri.moveTo(-BARN.w / 2, 0); tri.lineTo(BARN.w / 2, 0); tri.lineTo(0, 4.2); tri.closePath();
+  const gable = new THREE.Mesh(new THREE.ExtrudeGeometry(tri, { depth: BARN.d, bevelEnabled: false }), red);
+  gable.position.set(0, BARN.h, -BARN.d / 2); gable.castShadow = true; g.add(gable);
+  const slope = Math.hypot(BARN.w / 2, 4.2) + 0.6, ang = Math.atan2(4.2, BARN.w / 2);
+  for (const sgn of [-1, 1]) {
+    const r = box(slope, 0.3, BARN.d + 1, roofM);
+    r.position.set(sgn * BARN.w / 4, BARN.h + 2.1 + 0.15, 0); r.rotation.z = -sgn * ang; g.add(r);
+  }
+  const door = box(5, 5, 0.2, white); door.position.set(0, 2.5, BARN.d / 2 + 0.05); g.add(door);
+  const doorIn = box(4.2, 4.4, 0.25, red); doorIn.position.set(0, 2.4, BARN.d / 2 + 0.08); g.add(doorIn);
+  for (const s of [-1, 1]) { const x = box(0.25, 6, 0.3, white); x.position.set(0, 2.4, BARN.d / 2 + 0.12); x.rotation.z = s * 0.76; g.add(x); }
+  const loft = box(2.4, 1.8, 0.2, white); loft.position.set(0, BARN.h + 1.2, BARN.d / 2 + 0.05); g.add(loft);
+  // sign
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128;
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fbf6ea'; cx.fillRect(0, 0, 512, 128);
+  cx.fillStyle = '#2b2a28'; cx.font = '800 72px system-ui, sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('whim.farm', 256, 68);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(6, 1.5), new THREE.MeshLambertMaterial({ map: new THREE.CanvasTexture(cv) }));
+  sign.position.set(0, BARN.h - 1, BARN.d / 2 + 0.12); g.add(sign);
+  scene.add(g);
+}
+
+// trees + hills out past the fence
+{
+  const trunk = mat('#6b4426'), leaf = mat('#3f7d3a');
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2, r = 60 + Math.random() * 60;
+    const t = new THREE.Group(); t.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+    const tr = box(0.6, 3, 0.6, trunk); tr.position.y = 1.5; t.add(tr);
+    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.4 + Math.random(), 0), leaf);
+    crown.position.y = 4.4; crown.castShadow = true; t.add(crown);
+    scene.add(t);
+  }
+}
+
+// clouds
+const clouds = [];
+{
+  const cm = new THREE.MeshLambertMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.35 });
+  for (let i = 0; i < 14; i++) {
+    const c = new THREE.Group();
+    for (let j = 0; j < 5; j++) {
+      const s = new THREE.Mesh(new THREE.SphereGeometry(3 + Math.random() * 3, 10, 8), cm);
+      s.position.set(j * 4 - 8, Math.random() * 2, Math.random() * 3); c.add(s);
+    }
+    c.position.set((Math.random() * 2 - 1) * 180, 45 + Math.random() * 25, (Math.random() * 2 - 1) * 180);
+    clouds.push(c); scene.add(c);
+  }
+}
+
+// ---------- cows ----------
+function label(text, bg = '#fffdf7') {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96;
+  const c = cv.getContext('2d');
+  c.fillStyle = bg; c.strokeStyle = '#2b2a28'; c.lineWidth = 8;
+  c.beginPath(); c.roundRect(8, 8, 240, 80, 30); c.fill(); c.stroke();
+  c.fillStyle = '#2b2a28'; c.font = '800 48px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(text, 128, 50);
+  return new THREE.CanvasTexture(cv);
+}
+const white = mat('#fbfbf7'), black = mat('#2b2a28'), pink = mat('#f4a9b8'), horn = mat('#e8d8b0'), tagM = mat('#f2c94c');
+function makeCow(name) {
+  const cow = new THREE.Group();
+  const body = box(1.1, 1.0, 2.2, white); body.position.y = 1.15; cow.add(body);
+  for (let i = 0; i < 4; i++) {
+    const s = box(0.02 + 1.12, 0.35 + Math.random() * 0.3, 0.4 + Math.random() * 0.4, black);
+    s.position.set(0, 1.1 + (Math.random() - .5) * 0.5, (Math.random() - .5) * 1.6); cow.add(s);
+  }
+  for (const [x, z] of [[-.38, .8], [.38, .8], [-.38, -.8], [.38, -.8]]) {
+    const l = box(0.25, 0.75, 0.25, white); l.position.set(x, 0.38, z); cow.add(l);
+    const h = box(0.27, 0.15, 0.27, black); h.position.set(x, 0.07, z); cow.add(h);
+  }
+  const udder = box(0.45, 0.2, 0.4, pink); udder.position.set(0, 0.6, -0.5); cow.add(udder);
+  const head = new THREE.Group(); head.position.set(0, 1.55, 1.25); cow.add(head);
+  head.add(box(0.7, 0.65, 0.7, white));
+  const snout = box(0.6, 0.35, 0.25, pink); snout.position.set(0, -0.15, 0.42); head.add(snout);
+  for (const s of [-1, 1]) {
+    const e = box(0.08, 0.1, 0.02, black); e.position.set(s * 0.2, 0.1, 0.36); head.add(e);
+    const ear = box(0.3, 0.12, 0.15, white); ear.position.set(s * 0.48, 0.15, 0); head.add(ear);
+    const hr = box(0.1, 0.25, 0.1, horn); hr.position.set(s * 0.22, 0.42, -0.05); head.add(hr);
+  }
+  const tag = box(0.04, 0.16, 0.14, tagM); tag.position.set(0.64, 0.08, 0); head.add(tag);
+  const tail = box(0.08, 0.8, 0.08, white); tail.position.set(0, 1.0, -1.12); tail.rotation.x = 0.2; cow.add(tail);
+  const tuft = box(0.14, 0.2, 0.14, black); tuft.position.set(0, 0.55, -1.2); cow.add(tuft);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: label(name), depthWrite: false }));
+  sprite.scale.set(1.4, 0.52, 1); sprite.position.y = 2.6; cow.add(sprite);
+  cow.userData = { head, tail, sprite, name, nameTex: sprite.material.map };
+  return cow;
+}
+
+const herd = [];
+for (let i = 2; i <= 6; i++) {
+  const c = makeCow('cow' + i);
+  c.position.set((Math.random() * 2 - 1) * 30, 0, (Math.random() * 2 - 1) * 20 + 8);
+  c.rotation.y = Math.random() * 6.28;
+  Object.assign(c.userData, { target: null, wait: Math.random() * 3, speed: 1 + Math.random() * 0.6, mooTex: null, mooT: 0, phase: Math.random() * 6 });
+  herd.push(c); scene.add(c);
+}
+const randomSpot = (m = 6) => new THREE.Vector3((Math.random() * 2 - 1) * (FENCE - m), 0, (Math.random() * 2 - 1) * (FENCE - m));
+const inBarn = (x, z, pad) => Math.abs(x - BARN.x) < BARN.w / 2 + pad && Math.abs(z - BARN.z) < BARN.d / 2 + pad;
+
+// ---------- hay bales ----------
+const hayTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const c = cv.getContext('2d'); c.fillStyle = '#e1b84d'; c.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 500; i++) { c.strokeStyle = Math.random() < .5 ? '#c99a32' : '#f2d37a'; c.lineWidth = 1 + Math.random() * 2; const x = Math.random() * 128, y = Math.random() * 128; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.random() * 20 - 10, y + Math.random() * 6 - 3); c.stroke(); }
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1); return t;
+})();
+const hayM = new THREE.MeshLambertMaterial({ map: hayTex });
+const bales = [];
+function placeBale(b) {
+  let p; do p = randomSpot(4); while (inBarn(p.x, p.z, 2) || p.length() < 4);
+  b.position.set(p.x, 0.75, p.z); b.rotation.y = Math.random() * 6.28; b.scale.setScalar(1);
+  b.visible = true; b.userData.eaten = 0; b.userData.respawn = 0;
+}
+for (let i = 0; i < 12; i++) {
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 1.3, 20), hayM);
+  b.rotation.order = 'YXZ'; b.castShadow = b.receiveShadow = true;
+  b.geometry.rotateZ(Math.PI / 2);
+  placeBale(b); bales.push(b); scene.add(b);
+}
+// a little stack by the barn
+for (let i = 0; i < 3; i++) {
+  const b = box(1.8, 0.9, 1, hayM); b.position.set(BARN.x + BARN.w / 2 + 1.5, 0.45 + (i === 2 ? 0.9 : 0), BARN.z + 3 + (i === 1 ? 1.1 : i === 2 ? 0.55 : 0)); scene.add(b);
+}
+
+// ---------- you (cow1) ----------
+const player = { pos: new THREE.Vector3(0, 0, 14), yaw: 0, pitch: -0.1, bob: 0, eating: null, eatT: 0 };
+const EYE = 1.55;
+// your own snout at the bottom of the view
+const snout = new THREE.Group();
+{
+  const s = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), pink);
+  s.scale.set(0.34, 0.12, 0.2); snout.add(s);
+  for (const x of [-0.12, 0.12]) { const n = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 6), black); n.scale.set(1, 0.5, 1.5); n.position.set(x, 0.1, -0.12); snout.add(n); }
+  snout.position.set(0, -0.5, -0.62);
+  camera.add(snout);
+}
+
+// ---------- input ----------
+const keys = new Set();
+const overlay = document.getElementById('overlay');
+let playing = false, locked = false;
+addEventListener('keydown', e => {
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  if (!playing) return;
+  keys.add(e.code);
+  if ((e.code === 'Space' || e.code === 'KeyM') && !e.repeat) moo();
+  if (e.code === 'KeyE' && !e.repeat) tryEat();
+});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+
+function look(dx, dy, k) {
+  player.yaw -= dx * k; player.pitch = Math.max(-1.3, Math.min(1.1, player.pitch - dy * k));
+}
+document.getElementById('start').addEventListener('click', () => {
+  audio().resume?.();
+  playing = true; overlay.classList.add('hidden');
+  if (!isTouch) {
+    try { const r = renderer.domElement.requestPointerLock(); r?.catch?.(() => {}); } catch (e) {}
+  }
+});
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === renderer.domElement;
+  if (!locked && playing && !isTouch) { playing = false; keys.clear(); overlay.classList.remove('hidden'); }
+});
+let drag = null;
+renderer.domElement.addEventListener('mousedown', e => {
+  if (!playing || isTouch) return;
+  if (!locked) { try { const r = renderer.domElement.requestPointerLock(); r?.catch?.(() => {}); } catch (e) {} drag = { x: e.clientX, y: e.clientY }; }
+});
+addEventListener('mouseup', () => (drag = null));
+addEventListener('mousemove', e => {
+  if (!playing) return;
+  if (locked) look(e.movementX, e.movementY, 0.0022);
+  else if (drag) { look(e.clientX - drag.x, e.clientY - drag.y, 0.005); drag = { x: e.clientX, y: e.clientY }; }
+});
+
+// touch: left stick to walk, drag anywhere else to look
+const stick = document.getElementById('stick'), knob = document.getElementById('knob');
+const move = { x: 0, y: 0 };
+let stickId = null, lookId = null, lookLast = null;
+function stickAt(t) {
+  const r = stick.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let dx = t.clientX - cx, dy = t.clientY - cy; const m = Math.hypot(dx, dy), max = r.width / 2;
+  if (m > max) { dx *= max / m; dy *= max / m; }
+  knob.style.transform = `translate(${dx}px, ${dy}px)`; move.x = dx / max; move.y = dy / max;
+}
+stick.addEventListener('touchstart', e => { e.preventDefault(); const t = e.changedTouches[0]; stickId = t.identifier; stickAt(t); }, { passive: false });
+renderer.domElement.addEventListener('touchstart', e => { e.preventDefault(); const t = e.changedTouches[0]; if (lookId === null) { lookId = t.identifier; lookLast = { x: t.clientX, y: t.clientY }; } }, { passive: false });
+addEventListener('touchmove', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === stickId) stickAt(t);
+    else if (t.identifier === lookId && playing) { look(t.clientX - lookLast.x, t.clientY - lookLast.y, 0.006); lookLast = { x: t.clientX, y: t.clientY }; }
+  }
+}, { passive: false });
+addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === stickId) { stickId = null; move.x = move.y = 0; knob.style.transform = ''; }
+    if (t.identifier === lookId) lookId = null;
+  }
+});
+document.getElementById('tmoo').addEventListener('click', () => playing && moo());
+document.getElementById('teat').addEventListener('click', () => playing && tryEat());
+
+// ---------- actions ----------
+const toastEl = document.getElementById('toast'), promptEl = document.getElementById('prompt');
+let toastTimer;
+function toast(t, ms = 1200) { toastEl.textContent = t; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms); }
+
+function moo() {
+  const words = ['moo', 'mooo', 'MOO', 'moo?', 'mooooo'];
+  toast(words[Math.floor(Math.random() * words.length)]);
+  mooSound(1, 0.35);
+  // the nearest cow answers
+  let best = null, bd = Infinity;
+  for (const c of herd) { const d = c.position.distanceTo(player.pos); if (d < bd) { bd = d; best = c; } }
+  if (best && bd < 35) setTimeout(() => cowMoo(best, Math.max(0.05, 0.3 - bd / 140)), 600 + Math.random() * 700);
+}
+function cowMoo(c, vol = 0.2) {
+  const u = c.userData;
+  u.mooTex = u.mooTex || label('moo!', '#e8c25a');
+  u.sprite.material.map = u.mooTex; u.mooT = 1.6;
+  mooSound(0.85 + Math.random() * 0.35, vol);
+}
+function nearestBale() {
+  let best = null, bd = 2.8;
+  for (const b of bales) {
+    if (!b.visible || b.userData.eaten) continue;
+    const d = Math.hypot(b.position.x - player.pos.x, b.position.z - player.pos.z);
+    if (d < bd) { bd = d; best = b; }
+  }
+  return best;
+}
+function tryEat() {
+  if (player.eating) return;
+  const b = nearestBale();
+  if (!b) { toast('no hay here. find a bale.'); return; }
+  player.eating = b; player.eatT = 0; b.userData.eaten = 1; crunchSound();
+}
+
+// ---------- loop ----------
+const clock = new THREE.Clock();
+const fwd = new THREE.Vector3(), right = new THREE.Vector3(), step = new THREE.Vector3();
+function collide(p, r) {
+  const lim = FENCE - r; p.x = Math.max(-lim, Math.min(lim, p.x)); p.z = Math.max(-lim, Math.min(lim, p.z));
+  if (inBarn(p.x, p.z, r)) {
+    const dx = p.x - BARN.x, dz = p.z - BARN.z, ox = BARN.w / 2 + r - Math.abs(dx), oz = BARN.d / 2 + r - Math.abs(dz);
+    if (ox < oz) p.x += Math.sign(dx) * ox; else p.z += Math.sign(dz) * oz;
+  }
+  for (const b of bales) {
+    if (!b.visible) continue;
+    const dx = p.x - b.position.x, dz = p.z - b.position.z, d = Math.hypot(dx, dz), min = r + 0.75 * b.scale.x;
+    if (d < min && d > 0.0001) { p.x += dx / d * (min - d); p.z += dz / d * (min - d); }
+  }
+}
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+
+  // walk
+  let mx = 0, mz = 0;
+  if (playing && !player.eating) {
+    if (keys.has('KeyW') || keys.has('ArrowUp')) mz += 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) mz -= 1;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) mx -= 1;
+    mx += move.x; mz -= move.y;
+  }
+  const mag = Math.min(1, Math.hypot(mx, mz));
+  if (mag > 0.05) {
+    const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 7 : 3.6) * mag;
+    fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+    step.copy(fwd).multiplyScalar(mz).addScaledVector(right, mx).normalize().multiplyScalar(speed * dt);
+    player.pos.add(step);
+    player.bob += dt * speed * 2.2;
+  }
+  collide(player.pos, 0.8);
+  for (const c of herd) {
+    const dx = player.pos.x - c.position.x, dz = player.pos.z - c.position.z, d = Math.hypot(dx, dz);
+    if (d < 1.6 && d > 0.001) { player.pos.x += dx / d * (1.6 - d); player.pos.z += dz / d * (1.6 - d); }
+  }
+
+  // eat
+  let dip = 0;
+  if (player.eating) {
+    const b = player.eating; player.eatT += dt;
+    const k = Math.min(1, player.eatT / 1.3);
+    dip = Math.sin(k * Math.PI) * 0.35 + Math.sin(player.eatT * 18) * 0.03;
+    b.scale.setScalar(Math.max(0.05, 1 - k)); b.position.y = 0.75 * b.scale.x;
+    if (k >= 1) {
+      b.visible = false; b.userData.respawn = 20; player.eating = null;
+      hay += 1; localStorage.setItem(KEY, String(hay)); renderHud();
+      toast(hay % 10 === 0 ? hay + ' bales!' : 'nom. ' + usd(P) + ' hay payment made');
+    }
+  }
+  for (const b of bales) if (!b.visible && (b.userData.respawn -= dt) <= 0) placeBale(b);
+  const near = playing && !player.eating && nearestBale();
+  promptEl.textContent = isTouch ? 'tap eat' : 'press e to eat hay';
+  promptEl.classList.toggle('show', !!near);
+
+  camera.position.set(player.pos.x, EYE - dip * 0.6 + Math.sin(player.bob) * 0.05, player.pos.z);
+  camera.rotation.set(player.pitch - dip, player.yaw, Math.sin(player.bob * 0.5) * 0.012);
+  snout.position.y = -0.5 + Math.sin(player.bob) * 0.015;
+
+  // herd wanders
+  for (const c of herd) {
+    const u = c.userData;
+    if (u.mooT > 0 && (u.mooT -= dt) <= 0) u.sprite.material.map = u.nameTex;
+    u.tail.rotation.z = Math.sin(t * 2 + u.phase) * 0.3;
+    if (!u.target) {
+      if ((u.wait -= dt) <= 0) { do u.target = randomSpot(); while (inBarn(u.target.x, u.target.z, 2)); }
+      u.head.position.y = 1.35 + Math.sin(t * 1.5 + u.phase) * 0.05; // grazing
+      if (Math.random() < dt * 0.02) cowMoo(c, 0.06);
+      continue;
+    }
+    const dx = u.target.x - c.position.x, dz = u.target.z - c.position.z, d = Math.hypot(dx, dz);
+    if (d < 0.5) { u.target = null; u.wait = 3 + Math.random() * 8; continue; }
+    const want = Math.atan2(dx, dz);
+    let diff = want - c.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    c.rotation.y += diff * Math.min(1, dt * 2);
+    c.position.x += Math.sin(c.rotation.y) * u.speed * dt; c.position.z += Math.cos(c.rotation.y) * u.speed * dt;
+    collide(c.position, 1.2);
+    const pdx = c.position.x - player.pos.x, pdz = c.position.z - player.pos.z, pd = Math.hypot(pdx, pdz);
+    if (pd < 1.6 && pd > 0.001) { c.position.x += pdx / pd * (1.6 - pd); c.position.z += pdz / pd * (1.6 - pd); }
+    u.head.position.y = 1.55;
+    c.position.y = Math.abs(Math.sin(t * 6 + u.phase)) * 0.04;
+  }
+
+  for (const c of clouds) { c.position.x += dt * 1.2; if (c.position.x > 200) c.position.x = -200; }
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+window.cow1 = { player, bales, herd }; // handy for poking at from the console
+frame();
+</script>
+</body>
+</html>
