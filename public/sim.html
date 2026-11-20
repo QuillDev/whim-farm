@@ -119,7 +119,7 @@ const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const cleanName = n => String(n || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 16);
 const NAME_KEY = 'whimfarm-name';
 let myName = cleanName(localStorage.getItem(NAME_KEY));
-let board = {}, session = null;
+let board = {}, session = null, seq = 0;
 const myPts = () => (myName && board[myName]?.pts) || 0;
 async function api(path, body) {
   const r = await fetch('api/' + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
@@ -127,10 +127,16 @@ async function api(path, body) {
   if (!r.ok) throw Object.assign(new Error(d.error || r.status), { status: r.status });
   return d;
 }
+// the server keeps a key per name, so only this browser can play as myName
+const KEY_PREFIX = 'whimfarm-key:';
 async function startSession() {
-  const s = await api('session', { name: myName, room: ROOM });
-  session = s.session; board[myName] = { pts: s.pts };
+  const s = await api('session', { name: myName, room: ROOM, key: localStorage.getItem(KEY_PREFIX + myName) || '' });
+  localStorage.setItem(KEY_PREFIX + myName, s.key);
+  session = s.session; seq = 0; board[myName] = { pts: s.pts };
+  player.pos.set(s.x, 0, s.z); syncBales(s.bales);
 }
+// every request says where this cow is and carries the next number, so the server can check it
+const report = (path, body) => api(path, { session, seq: ++seq, x: +player.pos.x.toFixed(2), z: +player.pos.z.toFixed(2), ...body });
 async function loadBoard() {
   try {
     const d = await api('board?room=' + encodeURIComponent(ROOM) + (session ? '&session=' + session : ''));
@@ -472,10 +478,21 @@ const hayTex = (() => {
 })();
 const hayM = new THREE.MeshLambertMaterial({ map: hayTex });
 const bales = [];
-function placeBale(b) {
-  let p; do p = randomSpot(4); while (blocked(p.x, p.z, 3) || p.length() < 4);
+// the server decides where each of this cow's bales is; until it answers they go anywhere
+function placeBale(b, spot) {
+  let p = spot && new THREE.Vector3(spot.x, 0, spot.z);
+  if (!p) do p = randomSpot(4); while (blocked(p.x, p.z, 3) || p.length() < 4);
   b.position.set(p.x, 0.75, p.z); b.rotation.y = Math.random() * 6.28; b.scale.setScalar(1);
   b.visible = true; b.userData.eaten = 0; b.userData.respawn = 0;
+}
+function syncBales(list) {
+  list.forEach((s, i) => {
+    const b = bales[i];
+    if (!b || player.eating === b) return;
+    b.userData.spot = s;
+    if (s.in > 0) { b.visible = false; b.userData.respawn = s.in / 1000; }
+    else if (!b.visible || Math.hypot(b.position.x - s.x, b.position.z - s.z) > 0.3) placeBale(b, s);
+  });
 }
 for (let i = 0; i < 12; i++) {
   const b = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 1.3, 20), hayM);
@@ -574,7 +591,10 @@ function join() {
   myName = cleanName(nameInput.value) || defaultName;
   localStorage.setItem(NAME_KEY, myName);
   if (!board[myName]) board[myName] = { pts: 0 };
-  startSession().then(loadBoard).catch(e => console.warn('score server:', e));
+  startSession().then(loadBoard).catch(e => {
+    console.warn('score server:', e);
+    if (e.status === 403) { playing = false; overlay.classList.remove('hidden'); toast('that name belongs to another cow. pick another.', 3000); }
+  });
   nameInput.blur();
   playing = true; overlay.classList.add('hidden');
   renderHud(); renderBoard();
@@ -628,16 +648,17 @@ document.getElementById('teat').addEventListener('click', () => playing && tryEa
 // ---------- points ----------
 const boardList = document.getElementById('board-list'), netStatus = document.getElementById('net-status');
 // the client only says what happened; the server checks it and says how many points it was worth
-async function award(kind, why, chorus) {
+async function award(kind, why, extra) {
   if (!myName) return;
   for (let tries = 0; tries < 2; tries++) {
     try {
       if (!session) await startSession();
-      const d = await api('points', { session, kind, chorus });
+      const d = await report('points', { kind, ...extra });
       board[myName] = { pts: d.pts };
+      if (d.bales) syncBales(d.bales);
       renderHud(); renderBoard();
       if (why) toast(`${why} +${d.awarded}`, 1600);
-      return;
+      return d;
     } catch (e) {
       if (e.status === 404) { session = null; continue; }
       if (why && e.status !== 429) toast(why, 1600);
@@ -667,7 +688,7 @@ function noteMoo(who) {
   chorus.push({ who, t: now });
   return new Set(chorus.map(m => m.who)).size;
 }
-let lastHerdUp = -1e9;
+let lastHerdUp = -1e9, lastReport = 0;
 
 // ---------- actions ----------
 const toastEl = document.getElementById('toast'), promptEl = document.getElementById('prompt');
@@ -681,8 +702,9 @@ function moo() {
   const words = ['moo', 'mooo', 'MOO', 'moo?', 'mooooo'];
   toast(words[Math.floor(Math.random() * words.length)]);
   net.send({ t: 'moo' });
-  const k = noteMoo(net.selfId);
-  if (k >= 2) award('chorus', `moo chorus x${k}!`, k);
+  noteMoo(net.selfId);
+  // the server hears every moo and decides whether it made a chorus
+  award('moo').then(d => { if (d?.awarded) toast(`moo chorus x${d.awarded / 2}! +${d.awarded}`, 1600); });
   mooSound(1, 0.35);
   // the nearest cow answers
   let best = null, bd = Infinity;
@@ -910,10 +932,10 @@ function frame() {
       b.visible = false; b.userData.respawn = 20; player.eating = null;
       hay += 1; localStorage.setItem(KEY, String(hay)); renderHud();
       net.send({ t: 'eat' });
-      award('hay', hay % 10 === 0 ? hay + ' bales!' : 'nom. ' + usd(P) + ' hay payment made.');
+      award('hay', hay % 10 === 0 ? hay + ' bales!' : 'nom. ' + usd(P) + ' hay payment made.', { bale: bales.indexOf(b) });
     }
   }
-  for (const b of bales) if (!b.visible && (b.userData.respawn -= dt) <= 0) placeBale(b);
+  for (const b of bales) if (!b.visible && (b.userData.respawn -= dt) <= 0) placeBale(b, b.userData.spot);
   const near = playing && !player.eating && nearestBale();
   promptEl.textContent = isTouch ? 'tap eat' : 'press e to eat hay';
   promptEl.classList.toggle('show', !!near);
@@ -986,6 +1008,11 @@ function frame() {
   // other players' cows glide toward their last synced spot
   net.tick(dt, t);
   if (performance.now() - (net.lastPush ?? 0) > 100) { net.lastPush = performance.now(); net.pushState(); }
+  // tell the server where we are once a second; it only pays for things a cow could have walked to
+  if (playing && session && performance.now() - lastReport > 1000) {
+    lastReport = performance.now();
+    report('move').then(d => syncBales(d.bales)).catch(e => { if (e.status === 404) { session = null; startSession().catch(() => {}); } });
+  }
   // whole herd at the brush (2+ cows online, all within 6m): +10, once a minute
   if (playing && net.peers.size >= 1 && performance.now() - lastHerdUp > 60000) {
     const near = (x, z) => Math.hypot(x - BRUSH.x, z - BRUSH.z) < 6;

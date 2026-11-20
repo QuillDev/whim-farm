@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 
 process.env.WHIM_FARM_DB = join(mkdtempSync(join(tmpdir(), "whim-farm-")), "test.db");
 const { POST: session } = await import("../app/api/session/route.ts");
+const { POST: move } = await import("../app/api/move/route.ts");
 const { POST: points } = await import("../app/api/points/route.ts");
 const { GET: board } = await import("../app/api/board/route.ts");
+
+mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 10, 20) });
+const tick = (ms: number) => mock.timers.tick(ms);
 
 const post = async (route: (r: Request) => Promise<Response>, body: unknown) => {
   const res = await route(new Request("http://farm/api", { method: "POST", body: JSON.stringify(body) }));
@@ -16,37 +20,146 @@ const post = async (route: (r: Request) => Promise<Response>, body: unknown) => 
 const boardOf = async (room: string) =>
   (await (await board(new Request(`http://farm/api/board?room=${room}`))).json()).board;
 
-test("the server prices each action and the board keeps the total per room", async () => {
-  const a = (await post(session, { name: "daisy", room: "test-a" })).body.session;
-  const b = (await post(session, { name: "bessie", room: "test-a" })).body.session;
-  await post(session, { name: "loner", room: "test-b" });
+const BRUSH = { x: -21, z: -17.5 };
+type Bale = { x: number; z: number; in: number };
 
-  assert.deepEqual((await post(points, { session: a, kind: "hay" })).body, { awarded: 2, pts: 2 });
-  // a chorus can't be bigger than the cows actually in the room (2 here), whatever the client says
-  assert.deepEqual((await post(points, { session: a, kind: "chorus", chorus: 8 })).body, { awarded: 4, pts: 6 });
-  assert.deepEqual((await post(points, { session: b, kind: "herd" })).body, { awarded: 10, pts: 10 });
-  assert.deepEqual((await post(points, { session: b, kind: "brush" })).body, { awarded: 5, pts: 15 });
+// a cow played the way the page plays her: every request numbered, trotting, saying where she is every second.
+// a laggy cow trots flat out and her reports get held up, then arrive three at a time.
+async function cow(name: string, room: string, key = "", { speed = 5, lag = false } = {}) {
+  const s = (await post(session, { name, room, key })).body;
+  const c = {
+    session: s.session as string,
+    key: s.key as string,
+    seq: 0,
+    x: s.x as number,
+    z: s.z as number,
+    bales: s.bales as Bale[],
+    async walkTo(x: number, z: number) {
+      const held: object[] = [];
+      for (;;) {
+        const d = Math.hypot(x - c.x, z - c.z);
+        tick(1000);
+        if (d <= speed) [c.x, c.z] = [x, z];
+        else [c.x, c.z] = [c.x + ((x - c.x) * speed) / d, c.z + ((z - c.z) * speed) / d];
+        held.push({ session: c.session, seq: ++c.seq, x: c.x, z: c.z });
+        const arrived = c.x === x && c.z === z;
+        if (lag && held.length < 3 && !arrived) continue;
+        for (const m of held.splice(0)) c.bales = (await post(move, m)).body.bales;
+        if (arrived) return;
+      }
+    },
+    act(kind: string, extra: object = {}) {
+      return post(points, { session: c.session, seq: ++c.seq, kind, x: c.x, z: c.z, ...extra });
+    },
+    async eatNearest() {
+      const i = c.bales.findIndex((b) => b.in === 0);
+      await c.walkTo(c.bales[i].x + 1.6, c.bales[i].z);
+      tick(1300);
+      return { bale: i, ...(await c.act("hay", { bale: i })) };
+    },
+  };
+  return c;
+}
+
+test("honest cows score for hay, the brush, a herd and a moo chorus", async () => {
+  const daisy = await cow("daisy", "test-a");
+  const bessie = await cow("bessie", "test-a", "", { speed: 7, lag: true });
+  await cow("loner", "test-b");
+
+  assert.equal((await daisy.eatNearest()).body.awarded, 2);
+  await daisy.walkTo(BRUSH.x, BRUSH.z + 2);
+  assert.equal((await daisy.act("brush")).body.awarded, 5);
+  await bessie.walkTo(BRUSH.x + 2, BRUSH.z + 3);
+  assert.equal((await bessie.act("herd")).body.awarded, 10);
+
+  // a moo alone pays nothing; a second cow mooing within 2s makes a chorus of two
+  assert.equal((await daisy.act("moo")).body.awarded, 0);
+  tick(1500);
+  assert.equal((await bessie.act("moo")).body.awarded, 4);
 
   assert.deepEqual(await boardOf("test-a"), [
-    { name: "bessie", pts: 15 },
-    { name: "daisy", pts: 6 },
+    { name: "bessie", pts: 14 },
+    { name: "daisy", pts: 7 },
   ]);
   assert.deepEqual(await boardOf("test-b"), [{ name: "loner", pts: 0 }]);
 });
 
-test("claims the rules don't allow are refused and score nothing", async () => {
-  const s = (await post(session, { name: "cheat", room: "test-c" })).body.session;
-  await post(points, { session: s, kind: "brush" });
+test("cheats are refused and score nothing", async () => {
+  const cheat = await cow("cheat", "test-c");
+  const pal = await cow("pal", "test-c");
+  const replay = { session: cheat.session, seq: ++cheat.seq, kind: "moo", x: cheat.x, z: cheat.z };
+  await post(points, replay);
+  tick(60_000);
 
-  const refusals: [unknown, number][] = [
-    [{ session: s, kind: "brush" }, 429], // brush pays once per 20s
-    [{ session: s, kind: "herd" }, 409], // a herd needs two cows online
-    [{ session: s, kind: "chorus", chorus: 8 }, 409], // so does a chorus
-    [{ session: s, kind: "pts", pts: 9999 }, 400],
-    [{ session: "made-up", kind: "hay" }, 404],
+  // teleporting across the map after a minute standing still only gets her as far as 5s of trotting
+  const jump = (await post(move, { session: cheat.session, seq: ++cheat.seq, x: 44, z: -44 })).body;
+  assert.equal(jump.clamped, true);
+  assert.ok(Math.hypot(jump.x - 0, jump.z - 14) < 46);
+  // so does a burst of small hops sent all at once
+  let hop = jump;
+  for (let i = 1; i <= 20; i++)
+    hop = (await post(move, { session: cheat.session, seq: ++cheat.seq, x: jump.x - i, z: jump.z })).body;
+  assert.ok(hop.x > jump.x - 0.5);
+  // walking out through the fence stops her at the fence
+  await cheat.walkTo(40, 14);
+  tick(5000);
+  const out = (await post(move, { session: cheat.session, seq: ++cheat.seq, x: 999, z: 14 })).body;
+  assert.deepEqual([out.x, out.clamped], [44.2, true]);
+
+  const far = cheat.bales.reduce((f, b, i, all) =>
+    Math.hypot(b.x - out.x, b.z - out.z) > Math.hypot(all[f].x - out.x, all[f].z - out.z) ? i : f, 0);
+  const refusals: [string, object, number][] = [
+    ["hay she isn't near", { kind: "hay", bale: far, x: cheat.bales[far].x, z: cheat.bales[far].z }, 409],
+    ["hay that isn't there", { kind: "hay", bale: 99, x: out.x, z: out.z }, 409],
+    ["the brush from across the map", { kind: "brush", x: BRUSH.x, z: BRUSH.z }, 409],
+    ["a herd nobody brought to the brush", { kind: "herd", x: BRUSH.x, z: BRUSH.z }, 409],
+    ["a made-up action", { kind: "pts", pts: 9999, x: out.x, z: out.z }, 400],
   ];
-  for (const [claim, status] of refusals) {
-    assert.deepEqual([claim, (await post(points, claim)).status], [claim, status]);
+  for (const [why, claim, status] of refusals) {
+    tick(1000);
+    const r = await post(points, { session: cheat.session, seq: ++cheat.seq, ...claim });
+    assert.deepEqual([why, r.status], [why, status]);
   }
-  assert.deepEqual(await boardOf("test-c"), [{ name: "cheat", pts: 5 }]);
+
+  // eating the same bale twice
+  const eaten = await cheat.eatNearest();
+  assert.equal(eaten.body.awarded, 2);
+  const regrowing = eaten.body.bales[eaten.bale];
+  await cheat.walkTo(regrowing.x + 1.6, regrowing.z);
+  assert.equal((await cheat.act("hay", { bale: eaten.bale })).status, 409);
+  // sending a request she already sent
+  assert.equal((await post(points, replay)).status, 409);
+  // mooing faster than a cow can, even with a pal mooing along
+  await pal.act("moo");
+  assert.equal((await cheat.act("moo")).body.awarded, 4);
+  assert.equal((await cheat.act("moo")).status, 429);
+  // a fresh session doesn't reset the wait
+  const again = await cow("cheat", "test-c", cheat.key);
+  assert.equal((await again.act("moo")).status, 429);
+  // playing as another cow without her browser's key
+  assert.equal((await post(session, { name: "cheat", room: "test-c", key: "guess" })).status, 403);
+  assert.equal((await post(session, { name: "cheat", room: "test-c" })).status, 400);
+  // a session nobody was given
+  assert.equal((await post(points, { session: "made-up", seq: 1, kind: "moo", x: 0, z: 14 })).status, 404);
+
+  // a herd of one, then a herd whose other cow is across the map
+  const solo = await cow("solo", "test-d");
+  await solo.walkTo(BRUSH.x, BRUSH.z + 2);
+  assert.equal((await solo.act("herd")).status, 409);
+  const away = await cow("away", "test-d");
+  await away.walkTo(away.x, away.z + 1);
+  assert.equal((await solo.act("herd")).status, 409);
+  // nor one whose other cow came to the brush and then closed her tab
+  await away.walkTo(BRUSH.x + 2, BRUSH.z);
+  tick(11_000);
+  assert.equal((await solo.act("herd")).status, 409);
+  assert.deepEqual(await boardOf("test-d"), [
+    { name: "away", pts: 0 },
+    { name: "solo", pts: 0 },
+  ]);
+
+  assert.deepEqual(await boardOf("test-c"), [
+    { name: "cheat", pts: 6 },
+    { name: "pal", pts: 0 },
+  ]);
 });
