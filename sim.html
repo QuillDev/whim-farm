@@ -724,7 +724,7 @@ const net = {
       this.room.onPeerJoin = id => { this.shareBoard(id); this.updateStatus(); };
       this.room.onPeerLeave = id => this.drop(id);
       this.updateStatus();
-      setInterval(() => this.pushState(), 100);
+      this.lastPush = 0;
       setInterval(() => this.shareBoard(), 15000);
       // room cap: if the pasture is already full when we arrive, step out and graze solo
       setTimeout(() => {
@@ -943,6 +943,7 @@ function frame() {
 
   // other players' cows glide toward their last synced spot
   net.tick(dt, t);
+  if (performance.now() - (net.lastPush ?? 0) > 100) { net.lastPush = performance.now(); net.pushState(); }
   // whole herd at the brush (2+ cows online, all within 6m): +10, once a minute
   if (playing && net.peers.size >= 1 && performance.now() - lastHerdUp > 60000) {
     const near = (x, z) => Math.hypot(x - BRUSH.x, z - BRUSH.z) < 6;
@@ -952,8 +953,25 @@ function frame() {
   for (const c of clouds) { c.position.x += dt * 1.2; if (c.position.x > 200) c.position.x = -200; }
 
   renderer.render(scene, camera);
-  requestAnimationFrame(frame);
+  nextFrame();
 }
+// hidden tabs (headless bot browsers report hidden) never fire animation frames and throttle page timers to 1/s,
+// so there the loop ticks from a tiny worker, whose timers keep running
+let frameGen = 0, frameQueued = false, ticker = null, tickRun = null;
+function nextFrame() {
+  if (frameQueued) return;
+  frameQueued = true;
+  const gen = frameGen, run = () => { if (gen !== frameGen) return; frameQueued = false; frame(); };
+  if (!document.hidden) { requestAnimationFrame(run); return; }
+  if (!ticker) {
+    try {
+      ticker = new Worker(URL.createObjectURL(new Blob(['onmessage = () => setTimeout(() => postMessage(0), 33)'], { type: 'text/javascript' })));
+      ticker.onmessage = () => { const r = tickRun; tickRun = null; r?.(); };
+    } catch (e) { ticker = false; }
+  }
+  if (ticker) { tickRun = run; ticker.postMessage(0); } else setTimeout(run, 33);
+}
+document.addEventListener('visibilitychange', () => { frameGen++; frameQueued = false; nextFrame(); });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 window.cow1 = { player, bales, herd, brush: BRUSH, net, board: () => board, flat }; // handy for poking at from the console
 frame();
