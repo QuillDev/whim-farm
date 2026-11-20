@@ -30,6 +30,19 @@
   .card .keys { font-size: .95rem; opacity: .8; }
   button { font: inherit; font-weight: 800; font-size: 1.15rem; padding: 12px 22px; border-radius: 14px; border: 3px solid var(--ink); background: var(--hay); color: var(--ink); cursor: pointer; box-shadow: 0 4px 0 var(--ink); margin-top: 10px; }
   button:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+  .card label { display: block; font-weight: 800; margin: 12px 0 4px; text-align: left; }
+  .card input { font: inherit; font-size: 1.1rem; width: 100%; padding: 10px 12px; border: 3px solid var(--ink); border-radius: 12px; background: #fff; }
+  .card .howto { text-align: left; font-size: .88rem; line-height: 1.4; margin-top: 14px; opacity: .85; }
+  .card .howto p { margin: 4px 0; }
+  .board { position: fixed; top: 64px; right: 12px; width: 230px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; font-size: .85rem; line-height: 1.35; pointer-events: none; font-variant-numeric: tabular-nums; }
+  .board h2 { font-size: .95rem; margin: 0 0 4px; }
+  .board ol { margin: 0; padding-left: 20px; }
+  .board li { display: flex; justify-content: space-between; gap: 8px; }
+  .board li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board li.me { font-weight: 800; }
+  .board li.on span:first-child::after { content: ' ●'; color: #2f8a3c; }
+  .board .note, .board .net { font-size: .75rem; opacity: .7; margin-top: 4px; }
+  @media (max-width: 560px) { .board { top: auto; bottom: 170px; right: 8px; width: 170px; font-size: .75rem; } .is-touch .board .note { display: none; } }
   .touch { display: none; }
   .is-touch .touch { display: block; }
   .is-touch .cross, .is-touch .desk { display: none; }
@@ -49,6 +62,12 @@
 <div class="cross" id="cross"></div>
 <div class="prompt" id="prompt"></div>
 <div class="toast" id="toast"></div>
+<div class="board" id="board" aria-live="polite">
+  <h2>all-time herd board</h2>
+  <ol id="board-list"></ol>
+  <div class="net" id="net-status">herd: connecting…</div>
+  <div class="note">honor system: scores live in players' browsers and get re-shared, so a cow could fake its own.</div>
+</div>
 
 <div class="touch">
   <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
@@ -60,11 +79,17 @@
 
 <div class="overlay" id="overlay">
   <div class="card">
-    <h1>be cow1</h1>
-    <p>you are cow1. the pasture is yours. the hay is a lease payment.</p>
-    <p class="keys desk">wasd or arrows to walk, mouse to look, shift to trot, e to eat hay, space or m to moo. esc to stop.</p>
-    <p class="keys touch">left stick to walk, drag to look, buttons to eat and moo.</p>
-    <button id="start" type="button">start grazing</button>
+    <h1>join the herd</h1>
+    <p>you're a cow in a shared pasture. other cows online show up with name tags.</p>
+    <label for="cow-name">your cow name</label>
+    <input id="cow-name" name="cow-name" aria-label="your cow name" maxlength="16" autocomplete="off" spellcheck="false">
+    <button id="join" type="button">join the herd</button>
+    <div class="howto">
+      <p class="desk">wasd or arrows walk, mouse looks (or drag), shift trots, e eats hay, space or m moos.</p>
+      <p class="touch">left stick walks, drag looks, buttons eat and moo.</p>
+      <p>points: hay bale +2. cow brush +5 (walk into it, once per 20s). moo chorus: moo within 2s of another cow's moo for +2 per cow in the chorus. whole herd at the brush +10.</p>
+      <p>points only go up. the board is all-time.</p>
+    </div>
   </div>
 </div>
 
@@ -78,7 +103,7 @@ if (isTouch) document.body.classList.add('is-touch');
 const KEY = 'cow1-hay';
 let hay = Number(localStorage.getItem(KEY) || 0);
 const BKEY = 'cow1-brushed';
-let brushed = Number(localStorage.getItem(BKEY) || 0), freshUntil = 0;
+let brushed = Number(localStorage.getItem(BKEY) || 0), freshUntil = 0, lastBrushPts = -1e9;
 const P = 200, N = 60, R = 0.06 / 12;
 const PV = P * (1 - Math.pow(1 + R, -N)) / R;
 const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -87,10 +112,34 @@ function liability(k) {
   const g = Math.pow(1 + R, k);
   return Math.max(0, PV * g - P * (g - 1) / R);
 }
+// ---------- names + the all-time board (honor system, kept in localStorage and re-shared over p2p) ----------
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const cleanName = n => String(n || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 16);
+const NAME_KEY = 'whimfarm-name', BOARD_KEY = 'whimfarm-board';
+let myName = cleanName(localStorage.getItem(NAME_KEY));
+let board = {};
+try { board = JSON.parse(localStorage.getItem(BOARD_KEY) || '{}') || {}; } catch (e) { board = {}; }
+const myPts = () => (myName && board[myName]?.pts) || 0;
+function mergeBoard(incoming) {
+  let changed = false;
+  if (!incoming || typeof incoming !== 'object') return false;
+  for (const [raw, v] of Object.entries(incoming).slice(0, 300)) {
+    const name = cleanName(raw), pts = Math.floor(Number(v?.pts ?? v));
+    if (!name || !Number.isFinite(pts) || pts < 0 || pts > 1e7) continue;
+    if (!board[name] || board[name].pts < pts) { board[name] = { pts }; changed = true; }
+  }
+  if (changed) saveBoard();
+  return changed;
+}
+function saveBoard() {
+  const top = Object.entries(board).sort((a, b) => b[1].pts - a[1].pts).slice(0, 200);
+  board = Object.fromEntries(top);
+  localStorage.setItem(BOARD_KEY, JSON.stringify(board));
+}
 const hud = document.getElementById('hud');
 function renderHud() {
   const paid = Math.min(hay, N);
-  hud.innerHTML = `<b>cow1</b> · hay eaten <b>${hay.toLocaleString()}</b> · brushed <b>${brushed.toLocaleString()}</b>` +
+  hud.innerHTML = `<b>${esc(myName || 'cow1')}</b> · <b>${myPts().toLocaleString()}</b> pts<br>hay eaten <b>${hay.toLocaleString()}</b> · brushed <b>${brushed.toLocaleString()}</b>` +
     `<br>lease liability <b>${usd(liability(hay))}</b>` +
     (paid >= N ? '<br>lease paid off. still leased somehow.' : `<br>${paid} of ${N} hay payments made`) +
     (performance.now() < freshUntil ? '<br><span class="fresh">✨ freshly brushed</span>' : '');
@@ -326,7 +375,9 @@ function label(text, bg = '#fffdf7') {
   const c = cv.getContext('2d');
   c.fillStyle = bg; c.strokeStyle = '#2b2a28'; c.lineWidth = 8;
   c.beginPath(); c.roundRect(8, 8, 240, 80, 30); c.fill(); c.stroke();
-  c.fillStyle = '#2b2a28'; c.font = '800 48px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(text, 128, 50);
+  c.fillStyle = '#2b2a28'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  let fs = 48; do c.font = `800 ${fs}px system-ui, sans-serif`; while (c.measureText(text).width > 220 && (fs -= 2) > 16);
+  c.fillText(text, 128, 50);
   return new THREE.CanvasTexture(cv);
 }
 const white = mat('#fbfbf7'), black = mat('#2b2a28'), pink = mat('#f4a9b8'), horn = mat('#e8d8b0'), tagM = mat('#f2c94c');
@@ -463,8 +514,8 @@ const keys = new Set();
 const overlay = document.getElementById('overlay');
 let playing = false, locked = false;
 addEventListener('keydown', e => {
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   if (!playing) return;
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
   if ((e.code === 'Space' || e.code === 'KeyM') && !e.repeat) moo();
   if (e.code === 'KeyE' && !e.repeat) tryEat();
@@ -475,17 +526,25 @@ addEventListener('blur', () => keys.clear());
 function look(dx, dy, k) {
   player.yaw -= dx * k; player.pitch = Math.max(-1.3, Math.min(1.1, player.pitch - dy * k));
 }
-document.getElementById('start').addEventListener('click', () => {
+const nameInput = document.getElementById('cow-name');
+const defaultName = 'cow-' + Math.random().toString(36).slice(2, 6);
+nameInput.value = myName; nameInput.placeholder = defaultName;
+function join() {
   audio().resume?.();
+  myName = cleanName(nameInput.value) || defaultName;
+  localStorage.setItem(NAME_KEY, myName);
+  if (!board[myName]) { board[myName] = { pts: 0 }; saveBoard(); }
+  nameInput.blur();
   playing = true; overlay.classList.add('hidden');
+  renderHud(); renderBoard();
   if (!isTouch) {
     try { const r = renderer.domElement.requestPointerLock(); r?.catch?.(() => {}); } catch (e) {}
   }
-});
-document.addEventListener('pointerlockchange', () => {
-  locked = document.pointerLockElement === renderer.domElement;
-  if (!locked && playing && !isTouch) { playing = false; keys.clear(); overlay.classList.remove('hidden'); }
-});
+  net.start();
+}
+document.getElementById('join').addEventListener('click', join);
+nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
+document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === renderer.domElement; });
 let drag = null;
 renderer.domElement.addEventListener('mousedown', e => {
   if (!playing || isTouch) return;
@@ -525,14 +584,52 @@ addEventListener('touchend', e => {
 document.getElementById('tmoo').addEventListener('click', () => playing && moo());
 document.getElementById('teat').addEventListener('click', () => playing && tryEat());
 
+// ---------- points ----------
+const boardList = document.getElementById('board-list'), netStatus = document.getElementById('net-status');
+function award(n, why) {
+  if (!myName || n <= 0) return;
+  board[myName] = { pts: Math.max(myPts(), 0) + n }; saveBoard();
+  renderHud(); renderBoard();
+  if (why) toast(`${why} +${n}`, 1600);
+  net.shareBoard();
+}
+function renderBoard() {
+  const online = new Set([myName, ...[...net.peers.values()].map(p => p.name)]);
+  const rows = Object.entries(board).sort((a, b) => b[1].pts - a[1].pts).slice(0, 10);
+  if (myName && !rows.some(([n]) => n === myName)) rows.push([myName, board[myName] || { pts: 0 }]);
+  boardList.replaceChildren(...rows.map(([n, v]) => {
+    const li = document.createElement('li');
+    if (n === myName) li.classList.add('me');
+    if (online.has(n)) li.classList.add('on');
+    const a = document.createElement('span'), b = document.createElement('span');
+    a.textContent = n; b.textContent = v.pts.toLocaleString();
+    li.append(a, b); return li;
+  }));
+}
+// moo chorus: moos from different cows less than 2s apart chain together
+const chorus = [];
+function noteMoo(who) {
+  const now = performance.now();
+  if (chorus.length && now - chorus[chorus.length - 1].t > 2000) chorus.length = 0;
+  chorus.push({ who, t: now });
+  return new Set(chorus.map(m => m.who)).size;
+}
+let lastHerdUp = -1e9;
+
 // ---------- actions ----------
 const toastEl = document.getElementById('toast'), promptEl = document.getElementById('prompt');
 let toastTimer;
 function toast(t, ms = 1200) { toastEl.textContent = t; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms); }
 
+let lastMoo = 0;
 function moo() {
+  if (performance.now() - lastMoo < 500) return;
+  lastMoo = performance.now();
   const words = ['moo', 'mooo', 'MOO', 'moo?', 'mooooo'];
   toast(words[Math.floor(Math.random() * words.length)]);
+  net.send({ t: 'moo' });
+  const k = noteMoo(net.selfId);
+  if (k >= 2) award(2 * Math.min(k, 8), `moo chorus x${k}!`);
   mooSound(1, 0.35);
   // the nearest cow answers
   let best = null, bd = Infinity;
@@ -560,6 +657,118 @@ function tryEat() {
   if (!b) { toast('no hay here. find a bale.'); return; }
   player.eating = b; player.eatT = 0; b.userData.eaten = 1; crunchSound();
 }
+
+// ---------- multiplayer: p2p webrtc via trystero (nostr relays for signaling, no server of ours) ----------
+const ROOM = new URLSearchParams(location.search).get('room') || 'pasture';
+const MAX_PEERS = 15;
+const net = {
+  selfId: 'me', peers: new Map(), status: 'solo', room: null, sendState: null, sendEv: null, sendBoard: null, joinedAt: 0,
+  setStatus(text) { this.status = text; netStatus.textContent = text; },
+  async start() {
+    if (this.room) return;
+    this.setStatus('herd: connecting…');
+    try {
+      const { joinRoom, selfId } = await import('./vendor/trystero-nostr-0.26.0.mjs');
+      if (!window.RTCPeerConnection) throw new Error('no webrtc');
+      this.selfId = selfId;
+      this.room = joinRoom({ appId: 'whim.farm/cow-sim-v1', relayConfig: { urls: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.nostr.net', 'wss://relay.snort.social'] } }, ROOM);
+      this.joinedAt = performance.now();
+      // trystero 0.26 api: actions are objects with send() and an onMessage callback
+      const state = this.room.makeAction('state'), ev = this.room.makeAction('ev'), brd = this.room.makeAction('board');
+      this.sendState = d => state.send(d).catch(() => {});
+      this.sendEv = d => ev.send(d).catch(() => {});
+      this.sendBoard = (d, id) => brd.send(d, id ? { target: id } : undefined).catch(() => {});
+      state.onMessage = (d, ctx) => this.onState(d, ctx.peerId);
+      ev.onMessage = (d, ctx) => this.onEv(d, ctx.peerId);
+      brd.onMessage = d => { if (mergeBoard(d)) { renderBoard(); renderHud(); } };
+      this.room.onPeerJoin = id => { this.shareBoard(id); this.updateStatus(); };
+      this.room.onPeerLeave = id => this.drop(id);
+      this.updateStatus();
+      setInterval(() => this.pushState(), 100);
+      setInterval(() => this.shareBoard(), 15000);
+      // room cap: if the pasture is already full when we arrive, step out and graze solo
+      setTimeout(() => {
+        const ids = Object.keys(this.room.getPeers?.() || {});
+        if (ids.length >= MAX_PEERS + 1) { this.room.leave(); this.room = null; this.peers.forEach((_, id) => this.drop(id)); this.setStatus('herd is full (16 cows), grazing solo'); }
+      }, 6000);
+    } catch (e) {
+      console.warn('multiplayer off:', e);
+      this.room = null;
+      this.setStatus("couldn't reach the herd, grazing solo");
+    }
+  },
+  updateStatus() {
+    if (!this.room) return;
+    const n = this.peers.size;
+    this.setStatus(n ? `herd: ${n + 1} cows online` : "herd: you're the only cow online");
+  },
+  pushState() {
+    if (!this.sendState || !playing) return;
+    this.sendState({ n: myName, x: +player.pos.x.toFixed(2), z: +player.pos.z.toFixed(2), y: +player.yaw.toFixed(3), e: player.eating ? 1 : 0 });
+  },
+  shareBoard(id) { if (this.sendBoard) this.sendBoard(board, id); },
+  send(ev) { if (this.sendEv) this.sendEv(ev); },
+  onState(d, id) {
+    if (!d || typeof d !== 'object') return;
+    let p = this.peers.get(id);
+    if (!p) {
+      if (this.peers.size >= MAX_PEERS) return;
+      const name = cleanName(d.n) || 'cow-' + String(id).slice(0, 4);
+      const cow = makeCow(name);
+      cow.userData.phase = Math.random() * 6; cow.userData.fx = {};
+      p = { id, name, cow, x: 0, z: 0, yaw: 0, last: 0, eating: 0 };
+      cow.position.set(Number(d.x) || 0, 0, Number(d.z) || 0);
+      scene.add(cow); this.peers.set(id, p); this.updateStatus(); renderBoard();
+    }
+    const name = cleanName(d.n);
+    if (name && name !== p.name) { p.name = name; p.cow.userData.nameTex = label(name); p.cow.userData.sprite.material.map = p.cow.userData.nameTex; renderBoard(); }
+    const lim = FENCE;
+    const num = (v, def) => (Number.isFinite(Number(v)) ? Number(v) : def);
+    p.x = Math.max(-lim, Math.min(lim, num(d.x, p.x))); p.z = Math.max(-lim, Math.min(lim, num(d.z, p.z)));
+    p.yaw = num(d.y, p.yaw); p.eating = d.e ? 1 : 0; p.last = performance.now();
+  },
+  onEv(d, id) {
+    const p = this.peers.get(id);
+    if (!p || !d) return;
+    const dist = Math.hypot(p.x - player.pos.x, p.z - player.pos.z);
+    if (d.t === 'moo') {
+      cowMoo(p.cow, Math.max(0.04, 0.35 - dist / 120));
+      const k = noteMoo(id);
+      if (k >= 2) toast(`moo chorus x${k}!`, 1400);
+    } else if (d.t === 'eat' || d.t === 'brush') {
+      const u = p.cow.userData;
+      u.fx[d.t] ||= label(d.t === 'eat' ? 'nom' : 'brushed ✨', '#e8c25a');
+      u.sprite.material.map = u.fx[d.t]; u.mooT = 1.6;
+    }
+  },
+  drop(id) {
+    const p = this.peers.get(id);
+    if (!p) return;
+    scene.remove(p.cow); this.peers.delete(id); this.updateStatus(); renderBoard();
+  },
+  tick(dt, t) {
+    const now = performance.now();
+    for (const [id, p] of this.peers) {
+      if (now - p.last > 6000) { this.drop(id); continue; }
+      const c = p.cow, u = c.userData, k = Math.min(1, dt * 10);
+      const moving = Math.hypot(p.x - c.position.x, p.z - c.position.z) > 0.05;
+      c.position.x += (p.x - c.position.x) * k; c.position.z += (p.z - c.position.z) * k;
+      c.position.y = moving ? Math.abs(Math.sin(t * 8)) * 0.04 : 0;
+      // a player's yaw faces -z at 0; the cow model faces +z
+      const want = p.yaw + Math.PI;
+      let diff = want - c.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      c.rotation.y += diff * k;
+      u.head.position.y = p.eating ? 1.3 + Math.sin(t * 18) * 0.04 : 1.55;
+      u.tail.rotation.z = Math.sin(t * 2 + u.phase) * 0.3;
+      if (u.mooT > 0 && (u.mooT -= dt) <= 0) u.sprite.material.map = u.nameTex;
+      // you can't walk through other players
+      const dx = player.pos.x - c.position.x, dz = player.pos.z - c.position.z, d = Math.hypot(dx, dz);
+      if (d < 1.6 && d > 0.001) { player.pos.x += dx / d * (1.6 - d); player.pos.z += dz / d * (1.6 - d); }
+    }
+  },
+};
+addEventListener('pagehide', () => { try { net.room?.leave(); } catch (e) {} });
+renderBoard();
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
@@ -617,7 +826,8 @@ function frame() {
     if (k >= 1) {
       b.visible = false; b.userData.respawn = 20; player.eating = null;
       hay += 1; localStorage.setItem(KEY, String(hay)); renderHud();
-      toast(hay % 10 === 0 ? hay + ' bales!' : 'nom. ' + usd(P) + ' hay payment made');
+      net.send({ t: 'eat' });
+      award(2, hay % 10 === 0 ? hay + ' bales!' : 'nom. ' + usd(P) + ' hay payment made.');
     }
   }
   for (const b of bales) if (!b.visible && (b.userData.respawn -= dt) <= 0) placeBale(b);
@@ -677,8 +887,10 @@ function frame() {
   if (touching && !BRUSH.touching && t - BRUSH.lastTouch > 2.5) {
     brushed += 1; localStorage.setItem(BKEY, String(brushed));
     freshUntil = performance.now() + 20000; renderHud();
-    toast(brushed % 10 === 0 ? brushed + ' brushings!' : 'ahh. freshly brushed', 1600);
     brushSound();
+    net.send({ t: 'brush' });
+    if (performance.now() - lastBrushPts > 20000) { lastBrushPts = performance.now(); award(5, 'ahh. freshly brushed.'); }
+    else toast('ahh. freshly brushed', 1600);
   }
   if (touching) BRUSH.lastTouch = t;
   BRUSH.touching = touching;
@@ -688,13 +900,21 @@ function frame() {
   brush.children[1].position.x = touching ? Math.sin(t * 40) * 0.015 : 0; // bristles shake against your side
   if (freshUntil && performance.now() > freshUntil) { freshUntil = 0; renderHud(); }
 
+  // other players' cows glide toward their last synced spot
+  net.tick(dt, t);
+  // whole herd at the brush (2+ cows online, all within 6m): +10, once a minute
+  if (playing && net.peers.size >= 1 && performance.now() - lastHerdUp > 60000) {
+    const near = (x, z) => Math.hypot(x - BRUSH.x, z - BRUSH.z) < 6;
+    if (near(player.pos.x, player.pos.z) && [...net.peers.values()].every(p => near(p.x, p.z))) { lastHerdUp = performance.now(); award(10, 'herd up at the brush!'); }
+  }
+
   for (const c of clouds) { c.position.x += dt * 1.2; if (c.position.x > 200) c.position.x = -200; }
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-window.cow1 = { player, bales, herd, brush: BRUSH }; // handy for poking at from the console
+window.cow1 = { player, bales, herd, brush: BRUSH, net, board: () => board }; // handy for poking at from the console
 frame();
 </script>
 </body>

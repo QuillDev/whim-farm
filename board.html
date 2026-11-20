@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>herd board · whim.farm</title>
+<meta name="description" content="all-time whim.farm cow sim leaderboard, plain text.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐄</text></svg>">
+<style>
+  body { font-family: ui-monospace, "SF Mono", Menlo, monospace; background: #fffdf7; color: #2b2a28; margin: 0; padding: 24px; }
+  h1 { font-family: ui-rounded, system-ui, sans-serif; font-size: 1.6rem; margin: 0 0 4px; }
+  p { margin: 4px 0 12px; font-family: ui-rounded, system-ui, sans-serif; opacity: .75; font-size: .9rem; }
+  pre { font-size: 1.1rem; line-height: 1.5; margin: 0 0 12px; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<h1>all-time herd board</h1>
+<p>honor system: scores live in players' browsers and get re-shared over p2p, so a cow could fake its own. <a href="sim.html">play</a></p>
+<pre id="board-text">loading…</pre>
+<div id="last-updated">last updated: never</div>
+<div id="herd-status">herd: connecting…</div>
+<script type="module">
+// spectator: joins the same p2p room as sim.html, never sends a cow, merges cached + live scores
+const cleanName = n => String(n || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 16);
+const BOARD_KEY = 'whimfarm-board';
+const ROOM = new URLSearchParams(location.search).get('room') || 'pasture';
+let board = {};
+try { board = JSON.parse(localStorage.getItem(BOARD_KEY) || '{}') || {}; } catch (e) { board = {}; }
+const text = document.getElementById('board-text'), updated = document.getElementById('last-updated'), status = document.getElementById('herd-status');
+function merge(incoming) {
+  let changed = false;
+  if (!incoming || typeof incoming !== 'object') return false;
+  for (const [raw, v] of Object.entries(incoming).slice(0, 300)) {
+    const name = cleanName(raw), pts = Math.floor(Number(v?.pts ?? v));
+    if (!name || !Number.isFinite(pts) || pts < 0 || pts > 1e7) continue;
+    if (!board[name] || board[name].pts < pts) { board[name] = { pts }; changed = true; }
+  }
+  if (changed) {
+    board = Object.fromEntries(Object.entries(board).sort((a, b) => b[1].pts - a[1].pts).slice(0, 200));
+    localStorage.setItem(BOARD_KEY, JSON.stringify(board));
+  }
+  return changed;
+}
+function render() {
+  const rows = Object.entries(board).sort((a, b) => b[1].pts - a[1].pts || a[0].localeCompare(b[0]));
+  text.textContent = rows.length ? rows.map(([n, v]) => `${n} ${v.pts}`).join('\n') : 'no scores yet';
+  updated.textContent = 'last updated: ' + new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+}
+render();
+try {
+  const { joinRoom } = await import('./vendor/trystero-nostr-0.26.0.mjs');
+  const room = joinRoom({ appId: 'whim.farm/cow-sim-v1', relayConfig: { urls: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.nostr.net', 'wss://relay.snort.social'] } }, ROOM);
+  const brd = room.makeAction('board');
+  const live = () => { const n = Object.keys(room.getPeers()).length; status.textContent = n ? `herd: ${n} connected` : 'herd: nobody online right now, showing cached scores'; };
+  brd.onMessage = d => { if (merge(d)) render(); };
+  room.onPeerJoin = id => { brd.send(board, { target: id }).catch(() => {}); live(); };
+  room.onPeerLeave = live;
+  live();
+  setInterval(live, 10000);
+  addEventListener('pagehide', () => room.leave());
+} catch (e) {
+  console.warn('board offline:', e);
+  status.textContent = "couldn't reach the herd, showing cached scores";
+}
+</script>
+</body>
+</html>
