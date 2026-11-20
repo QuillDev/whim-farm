@@ -14,6 +14,8 @@
   canvas { display: block; }
   .hud { position: fixed; top: 12px; left: 12px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; font-size: .95rem; line-height: 1.35; pointer-events: none; font-variant-numeric: tabular-nums; }
   .hud b { font-weight: 800; }
+  .hud .fresh { font-weight: 800; color: #2f8a3c; }
+  @media (max-width: 560px) { .hud { top: 62px; font-size: .85rem; } }
   .back { position: fixed; top: 12px; right: 12px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; color: var(--ink); text-decoration: none; font-weight: 800; }
   .prompt { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); background: var(--hay); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 14px; font-weight: 800; display: none; pointer-events: none; white-space: nowrap; }
   .prompt.show { display: block; }
@@ -75,6 +77,8 @@ if (isTouch) document.body.classList.add('is-touch');
 // ---------- shared hay counter + lease math (same as the home page) ----------
 const KEY = 'cow1-hay';
 let hay = Number(localStorage.getItem(KEY) || 0);
+const BKEY = 'cow1-brushed';
+let brushed = Number(localStorage.getItem(BKEY) || 0), freshUntil = 0;
 const P = 200, N = 60, R = 0.06 / 12;
 const PV = P * (1 - Math.pow(1 + R, -N)) / R;
 const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -86,8 +90,10 @@ function liability(k) {
 const hud = document.getElementById('hud');
 function renderHud() {
   const paid = Math.min(hay, N);
-  hud.innerHTML = `<b>cow1</b> · hay eaten <b>${hay.toLocaleString()}</b><br>lease liability <b>${usd(liability(hay))}</b>` +
-    (paid >= N ? '<br>lease paid off. still leased somehow.' : `<br>${paid} of ${N} hay payments made`);
+  hud.innerHTML = `<b>cow1</b> · hay eaten <b>${hay.toLocaleString()}</b> · brushed <b>${brushed.toLocaleString()}</b>` +
+    `<br>lease liability <b>${usd(liability(hay))}</b>` +
+    (paid >= N ? '<br>lease paid off. still leased somehow.' : `<br>${paid} of ${N} hay payments made`) +
+    (performance.now() < freshUntil ? '<br><span class="fresh">✨ freshly brushed</span>' : '');
 }
 renderHud();
 
@@ -128,6 +134,26 @@ function crunchSound() {
       s.buffer = buf; f.type = 'bandpass'; f.frequency.value = 1800 + Math.random() * 1500; g.gain.value = 0.25;
       s.connect(f); f.connect(g); g.connect(ctx.destination); s.start(t0 + i * 0.28);
     }
+  } catch (e) {}
+}
+
+function brushSound() {
+  try {
+    const ctx = audio(), t = ctx.currentTime, dur = 1.6;
+    // motor whine spinning up and down
+    const o = ctx.createOscillator(), og = ctx.createGain(), of = ctx.createBiquadFilter();
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(45, t); o.frequency.linearRampToValueAtTime(110, t + 0.5); o.frequency.linearRampToValueAtTime(70, t + dur);
+    of.type = 'lowpass'; of.frequency.value = 500;
+    og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.12, t + 0.2); og.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(of); of.connect(og); og.connect(ctx.destination); o.start(t); o.stop(t + dur);
+    // bristles: swishy filtered noise, wobbling with the spin
+    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const n = ctx.createBufferSource(), nf = ctx.createBiquadFilter(), ng = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain();
+    n.buffer = buf; nf.type = 'bandpass'; nf.frequency.value = 3200; nf.Q.value = 0.8;
+    lfo.frequency.value = 7; lg.gain.value = 0.06; lfo.connect(lg); lg.connect(ng.gain);
+    ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.12, t + 0.15); ng.gain.setValueAtTime(0.12, t + dur - 0.5); ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    n.connect(nf); nf.connect(ng); ng.connect(ctx.destination); n.start(t); lfo.start(t); lfo.stop(t + dur);
   } catch (e) {}
 }
 
@@ -352,7 +378,7 @@ const hayTex = (() => {
 const hayM = new THREE.MeshLambertMaterial({ map: hayTex });
 const bales = [];
 function placeBale(b) {
-  let p; do p = randomSpot(4); while (inBarn(p.x, p.z, 2) || p.length() < 4);
+  let p; do p = randomSpot(4); while (inBarn(p.x, p.z, 2) || p.length() < 4 || Math.hypot(p.x - BARN.x + 5, p.z - BARN.z - BARN.d / 2 - 2.6) < 3.5);
   b.position.set(p.x, 0.75, p.z); b.rotation.y = Math.random() * 6.28; b.scale.setScalar(1);
   b.visible = true; b.userData.eaten = 0; b.userData.respawn = 0;
 }
@@ -365,6 +391,55 @@ for (let i = 0; i < 12; i++) {
 // a little stack by the barn
 for (let i = 0; i < 3; i++) {
   const b = box(1.8, 0.9, 1, hayM); b.position.set(BARN.x + BARN.w / 2 + 1.5, 0.45 + (i === 2 ? 0.9 : 0), BARN.z + 3 + (i === 1 ? 1.1 : i === 2 ? 0.55 : 0)); scene.add(b);
+}
+
+// cow brush, bolted to the barn's front wall like the j&d smart cow brush
+const BRUSH = { x: BARN.x - 5, z: BARN.z + BARN.d / 2 + 2.6, r: 0.55, spin: 0, angle: 0, touching: false, lastTouch: -99 };
+const brush = new THREE.Group();
+{
+  const steel = mat('#3d4146'), grey = mat('#7c838b'), shaftM = mat('#b9bec4');
+  const wallZ = BARN.z + BARN.d / 2, armY = 3.2;
+  const plate = box(0.9, 1.3, 0.12, steel); plate.position.set(BRUSH.x, armY - 0.25, wallZ + 0.06); scene.add(plate);
+  const arm = box(0.2, 0.22, BRUSH.z - wallZ + 0.5, steel); arm.position.set(BRUSH.x, armY, (wallZ + BRUSH.z + 0.5) / 2); scene.add(arm);
+  const braceLen = Math.hypot(0.9, 1.5);
+  const brace = box(0.06, braceLen, 0.06, steel); brace.position.set(BRUSH.x, armY - 0.45, wallZ + 0.75); brace.rotation.x = Math.atan2(1.5, 0.9) - Math.PI / 2; scene.add(brace);
+  // label on the arm
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 64;
+  const cx = cv.getContext('2d'); cx.fillStyle = '#3d4146'; cx.fillRect(0, 0, 512, 64);
+  cx.fillStyle = '#fff'; cx.font = 'italic 800 34px system-ui, sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('Smart Cow Brush', 256, 34);
+  const lab = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv) }));
+  for (const sgn of [-1, 1]) { const l = lab.clone(); l.position.set(BRUSH.x + sgn * 0.101, armY, (wallZ + BRUSH.z) / 2 + 0.2); l.rotation.y = sgn * Math.PI / 2; scene.add(l); }
+  // motor + gearbox on top, over the brush
+  const gear = box(0.4, 0.34, 0.45, grey); gear.position.set(BRUSH.x, armY + 0.28, BRUSH.z); scene.add(gear);
+  const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.7, 16), grey); motor.rotation.z = Math.PI / 2;
+  motor.position.set(BRUSH.x - 0.5, armY + 0.3, BRUSH.z); motor.castShadow = true; scene.add(motor);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.08, 16), steel); cap.rotation.z = Math.PI / 2; cap.position.set(BRUSH.x - 0.86, armY + 0.3, BRUSH.z); scene.add(cap);
+  // spinning part: shaft + hourglass bristle roll
+  brush.position.set(BRUSH.x, 0, BRUSH.z);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, armY - 2.0, 10), shaftM); shaft.position.y = (armY + 2.0) / 2; brush.add(shaft);
+  const pts = [];
+  for (let i = 0; i <= 16; i++) { const y = i / 16; pts.push(new THREE.Vector2(BRUSH.r - 0.14 * Math.sin(y * Math.PI), 0.45 + y * 1.55)); }
+  const bristleTex = (() => {
+    const c2 = document.createElement('canvas'); c2.width = 256; c2.height = 256; const g = c2.getContext('2d');
+    g.fillStyle = '#2f9a45'; g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 2600; i++) { g.fillStyle = ['#1f7a34', '#45b75a', '#2a8c3e', '#63c96f'][i % 4]; g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2 + Math.random() * 3); }
+    g.fillStyle = 'rgba(20,70,30,.55)'; for (let k = 0; k < 8; k++) g.fillRect(k * 32, 0, 4, 256); // tuft rows so the spin reads
+    const t = new THREE.CanvasTexture(c2); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 2); return t;
+  })();
+  const roll = new THREE.Mesh(new THREE.LatheGeometry(pts, 28), new THREE.MeshLambertMaterial({ map: bristleTex }));
+  roll.castShadow = true; brush.add(roll);
+  // bristle fuzz: two see-through shells of green tips so the edge looks hairy, not smooth
+  const tips = document.createElement('canvas'); tips.width = tips.height = 256;
+  const tg = tips.getContext('2d');
+  for (let i = 0; i < 1800; i++) { tg.fillStyle = ['#2a8c3e', '#45b75a', '#63c96f'][i % 3]; tg.fillRect(Math.random() * 256, Math.random() * 256, 2, 3); }
+  const tipTex = new THREE.CanvasTexture(tips); tipTex.wrapS = tipTex.wrapT = THREE.RepeatWrapping; tipTex.repeat.set(3, 3);
+  const fuzzM = new THREE.MeshLambertMaterial({ map: tipTex, alphaTest: 0.5, transparent: false, side: THREE.DoubleSide });
+  for (const k of [0.05, 0.1]) {
+    const shell = new THREE.Mesh(new THREE.LatheGeometry(pts.map(v => new THREE.Vector2(v.x + k, v.y)), 28), fuzzM);
+    shell.rotation.y = k * 20; brush.add(shell);
+  }
+  for (const y of [0.45, 2.0]) { const d = new THREE.Mesh(new THREE.CylinderGeometry(BRUSH.r, BRUSH.r, 0.04, 28), mat('#1d6e30')); d.position.y = y; brush.add(d); }
+  scene.add(brush);
 }
 
 // ---------- you (cow1) ----------
@@ -492,6 +567,10 @@ function collide(p, r) {
     const dx = p.x - BARN.x, dz = p.z - BARN.z, ox = BARN.w / 2 + r - Math.abs(dx), oz = BARN.d / 2 + r - Math.abs(dz);
     if (ox < oz) p.x += Math.sign(dx) * ox; else p.z += Math.sign(dz) * oz;
   }
+  {
+    const dx = p.x - BRUSH.x, dz = p.z - BRUSH.z, d = Math.hypot(dx, dz), min = r + BRUSH.r;
+    if (d < min && d > 0.0001) { p.x += dx / d * (min - d); p.z += dz / d * (min - d); }
+  }
   for (const b of bales) {
     if (!b.visible) continue;
     const dx = p.x - b.position.x, dz = p.z - b.position.z, d = Math.hypot(dx, dz), min = r + 0.75 * b.scale.x;
@@ -571,13 +650,30 @@ function frame() {
     c.position.y = Math.abs(Math.sin(t * 6 + u.phase)) * 0.04;
   }
 
+  // brush: touching it starts a scratch, it spins up, then coasts down
+  const bd = Math.hypot(player.pos.x - BRUSH.x, player.pos.z - BRUSH.z);
+  const touching = playing && bd < 0.8 + BRUSH.r + 0.25;
+  if (touching && !BRUSH.touching && t - BRUSH.lastTouch > 2.5) {
+    brushed += 1; localStorage.setItem(BKEY, String(brushed));
+    freshUntil = performance.now() + 20000; renderHud();
+    toast(brushed % 10 === 0 ? brushed + ' brushings!' : 'ahh. freshly brushed', 1600);
+    brushSound();
+  }
+  if (touching) BRUSH.lastTouch = t;
+  BRUSH.touching = touching;
+  const want = t - BRUSH.lastTouch < 1.5 ? 9 : 0;
+  BRUSH.spin += (want - BRUSH.spin) * Math.min(1, dt * (want ? 3 : 0.8));
+  brush.rotation.y += BRUSH.spin * dt;
+  brush.children[1].position.x = touching ? Math.sin(t * 40) * 0.015 : 0; // bristles shake against your side
+  if (freshUntil && performance.now() > freshUntil) { freshUntil = 0; renderHud(); }
+
   for (const c of clouds) { c.position.x += dt * 1.2; if (c.position.x > 200) c.position.x = -200; }
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-window.cow1 = { player, bales, herd }; // handy for poking at from the console
+window.cow1 = { player, bales, herd, brush: BRUSH }; // handy for poking at from the console
 frame();
 </script>
 </body>
