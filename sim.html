@@ -265,6 +265,8 @@ const FENCE = 45;
 
 // barn
 const BARN = { x: -18, z: -30, w: 14, d: 11, h: 7 };
+// cow brush on its own post, well clear of the barn so cows can walk all the way around it
+const BRUSH = { x: BARN.x - 3, z: BARN.z + BARN.d / 2 + 7, r: 0.55, postX: BARN.x - 3 - 1.5, postR: 0.15, spin: 0, angle: 0, touching: false, lastTouch: -99 };
 {
   const g = new THREE.Group(); g.position.set(BARN.x, 0, BARN.z);
   const red = mat('#b8432f'), white = mat('#fbf6ea'), roofM = mat('#5a2a22');
@@ -367,6 +369,8 @@ for (let i = 2; i <= 6; i++) {
 }
 const randomSpot = (m = 6) => new THREE.Vector3((Math.random() * 2 - 1) * (FENCE - m), 0, (Math.random() * 2 - 1) * (FENCE - m));
 const inBarn = (x, z, pad) => Math.abs(x - BARN.x) < BARN.w / 2 + pad && Math.abs(z - BARN.z) < BARN.d / 2 + pad;
+const nearBrush = (x, z, pad) => Math.hypot(x - BRUSH.x, z - BRUSH.z) < BRUSH.r + pad || Math.hypot(x - BRUSH.postX, z - BRUSH.z) < BRUSH.postR + pad;
+const blocked = (x, z, pad) => inBarn(x, z, pad) || nearBrush(x, z, pad);
 
 // ---------- hay bales ----------
 const hayTex = (() => {
@@ -378,7 +382,7 @@ const hayTex = (() => {
 const hayM = new THREE.MeshLambertMaterial({ map: hayTex });
 const bales = [];
 function placeBale(b) {
-  let p; do p = randomSpot(4); while (inBarn(p.x, p.z, 2) || p.length() < 4 || Math.hypot(p.x - BARN.x + 5, p.z - BARN.z - BARN.d / 2 - 2.6) < 3.5);
+  let p; do p = randomSpot(4); while (blocked(p.x, p.z, 3) || p.length() < 4);
   b.position.set(p.x, 0.75, p.z); b.rotation.y = Math.random() * 6.28; b.scale.setScalar(1);
   b.visible = true; b.userData.eaten = 0; b.userData.respawn = 0;
 }
@@ -393,22 +397,21 @@ for (let i = 0; i < 3; i++) {
   const b = box(1.8, 0.9, 1, hayM); b.position.set(BARN.x + BARN.w / 2 + 1.5, 0.45 + (i === 2 ? 0.9 : 0), BARN.z + 3 + (i === 1 ? 1.1 : i === 2 ? 0.55 : 0)); scene.add(b);
 }
 
-// cow brush, bolted to the barn's front wall like the j&d smart cow brush
-const BRUSH = { x: BARN.x - 5, z: BARN.z + BARN.d / 2 + 2.6, r: 0.55, spin: 0, angle: 0, touching: false, lastTouch: -99 };
+// cow brush, hung from a steel post like the j&d smart cow brush
 const brush = new THREE.Group();
 {
   const steel = mat('#3d4146'), grey = mat('#7c838b'), shaftM = mat('#b9bec4');
-  const wallZ = BARN.z + BARN.d / 2, armY = 3.2;
-  const plate = box(0.9, 1.3, 0.12, steel); plate.position.set(BRUSH.x, armY - 0.25, wallZ + 0.06); scene.add(plate);
-  const arm = box(0.2, 0.22, BRUSH.z - wallZ + 0.5, steel); arm.position.set(BRUSH.x, armY, (wallZ + BRUSH.z + 0.5) / 2); scene.add(arm);
-  const braceLen = Math.hypot(0.9, 1.5);
-  const brace = box(0.06, braceLen, 0.06, steel); brace.position.set(BRUSH.x, armY - 0.45, wallZ + 0.75); brace.rotation.x = Math.atan2(1.5, 0.9) - Math.PI / 2; scene.add(brace);
+  const armY = 3.2, armLen = BRUSH.x - BRUSH.postX + 0.5;
+  const post = box(BRUSH.postR * 2, armY + 0.2, BRUSH.postR * 2, steel); post.position.set(BRUSH.postX, (armY + 0.2) / 2, BRUSH.z); scene.add(post);
+  const foot = box(0.8, 0.08, 0.8, steel); foot.position.set(BRUSH.postX, 0.04, BRUSH.z); scene.add(foot);
+  const arm = box(armLen, 0.22, 0.2, steel); arm.position.set(BRUSH.postX + armLen / 2, armY, BRUSH.z); scene.add(arm);
+  const brace = box(0.06, Math.hypot(0.9, 1.5), 0.06, steel); brace.position.set(BRUSH.postX + 0.45, armY - 0.75, BRUSH.z); brace.rotation.z = -Math.atan2(0.9, 1.5); scene.add(brace);
   // label on the arm
   const cv = document.createElement('canvas'); cv.width = 512; cv.height = 64;
   const cx = cv.getContext('2d'); cx.fillStyle = '#3d4146'; cx.fillRect(0, 0, 512, 64);
   cx.fillStyle = '#fff'; cx.font = 'italic 800 34px system-ui, sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('Smart Cow Brush', 256, 34);
   const lab = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv) }));
-  for (const sgn of [-1, 1]) { const l = lab.clone(); l.position.set(BRUSH.x + sgn * 0.101, armY, (wallZ + BRUSH.z) / 2 + 0.2); l.rotation.y = sgn * Math.PI / 2; scene.add(l); }
+  for (const sgn of [-1, 1]) { const l = lab.clone(); l.scale.x = Math.min(1, (armLen - 0.4) / 1.9); l.position.set(BRUSH.postX + armLen / 2 - 0.15, armY, BRUSH.z + sgn * 0.101); l.rotation.y = sgn > 0 ? 0 : Math.PI; scene.add(l); }
   // motor + gearbox on top, over the brush
   const gear = box(0.4, 0.34, 0.45, grey); gear.position.set(BRUSH.x, armY + 0.28, BRUSH.z); scene.add(gear);
   const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.7, 16), grey); motor.rotation.z = Math.PI / 2;
@@ -567,8 +570,8 @@ function collide(p, r) {
     const dx = p.x - BARN.x, dz = p.z - BARN.z, ox = BARN.w / 2 + r - Math.abs(dx), oz = BARN.d / 2 + r - Math.abs(dz);
     if (ox < oz) p.x += Math.sign(dx) * ox; else p.z += Math.sign(dz) * oz;
   }
-  {
-    const dx = p.x - BRUSH.x, dz = p.z - BRUSH.z, d = Math.hypot(dx, dz), min = r + BRUSH.r;
+  for (const [cx, cr] of [[BRUSH.x, BRUSH.r], [BRUSH.postX, BRUSH.postR]]) {
+    const dx = p.x - cx, dz = p.z - BRUSH.z, d = Math.hypot(dx, dz), min = r + cr;
     if (d < min && d > 0.0001) { p.x += dx / d * (min - d); p.z += dz / d * (min - d); }
   }
   for (const b of bales) {
@@ -632,13 +635,29 @@ function frame() {
     if (u.mooT > 0 && (u.mooT -= dt) <= 0) u.sprite.material.map = u.nameTex;
     u.tail.rotation.z = Math.sin(t * 2 + u.phase) * 0.3;
     if (!u.target) {
-      if ((u.wait -= dt) <= 0) { do u.target = randomSpot(); while (inBarn(u.target.x, u.target.z, 2)); }
+      if ((u.wait -= dt) <= 0) { do u.target = randomSpot(); while (blocked(u.target.x, u.target.z, 2.5)); u.chk = null; }
       u.head.position.y = 1.35 + Math.sin(t * 1.5 + u.phase) * 0.05; // grazing
       if (Math.random() < dt * 0.02) cowMoo(c, 0.06);
       continue;
     }
     const dx = u.target.x - c.position.x, dz = u.target.z - c.position.z, d = Math.hypot(dx, dz);
-    if (d < 0.5) { u.target = null; u.wait = 3 + Math.random() * 8; continue; }
+    if (d < 0.5) { u.target = null; u.chk = null; u.wait = 3 + Math.random() * 8; continue; }
+    // unstick: walking for 2.5s without getting 0.5m anywhere means she's pinned, so turn around and head off somewhere open
+    if (!u.chk) u.chk = { x: c.position.x, z: c.position.z, t };
+    else if (Math.hypot(c.position.x - u.chk.x, c.position.z - u.chk.z) > 0.5) u.chk = { x: c.position.x, z: c.position.z, t };
+    else if (t - u.chk.t > 2.5) {
+      const back = c.rotation.y + Math.PI + (Math.random() - 0.5) * 1.2;
+      let tgt = null;
+      for (let i = 0; i < 20 && !tgt; i++) {
+        const dist = 6 + Math.random() * 8, x = c.position.x + Math.sin(back) * dist, z = c.position.z + Math.cos(back) * dist, lim = FENCE - 6;
+        if (Math.abs(x) < lim && Math.abs(z) < lim && !blocked(x, z, 2.5)) tgt = new THREE.Vector3(x, 0, z);
+      }
+      if (!tgt) do tgt = randomSpot(); while (blocked(tgt.x, tgt.z, 2.5));
+      u.target = tgt; c.rotation.y = back;
+      c.position.x += Math.sin(back) * 0.3; c.position.z += Math.cos(back) * 0.3; collide(c.position, 1.2);
+      u.chk = { x: c.position.x, z: c.position.z, t };
+      continue;
+    }
     const want = Math.atan2(dx, dz);
     let diff = want - c.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
     c.rotation.y += diff * Math.min(1, dt * 2);
@@ -651,8 +670,10 @@ function frame() {
   }
 
   // brush: touching it starts a scratch, it spins up, then coasts down
-  const bd = Math.hypot(player.pos.x - BRUSH.x, player.pos.z - BRUSH.z);
-  const touching = playing && bd < 0.8 + BRUSH.r + 0.25;
+  // generous: up against it from any side, or close and looking at it
+  const bx = BRUSH.x - player.pos.x, bz = BRUSH.z - player.pos.z, bd = Math.hypot(bx, bz);
+  const facing = (-Math.sin(player.yaw) * bx - Math.cos(player.yaw) * bz) / Math.max(bd, 0.001) > 0.8;
+  const touching = playing && (bd < 2.2 || (bd < 3.2 && facing));
   if (touching && !BRUSH.touching && t - BRUSH.lastTouch > 2.5) {
     brushed += 1; localStorage.setItem(BKEY, String(brushed));
     freshUntil = performance.now() + 20000; renderHud();
