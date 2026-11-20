@@ -43,6 +43,8 @@
   .board li.on span:first-child::after { content: ' ●'; color: #2f8a3c; }
   .board .note, .board .net { font-size: .75rem; opacity: .7; margin-top: 4px; }
   @media (max-width: 560px) { .board { top: auto; bottom: 170px; right: 8px; width: 170px; font-size: .75rem; } .is-touch .board .note { display: none; } }
+  .card .flat-note { background: #fff3c4; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px; font-size: .9rem; }
+  .is-flat .cross { display: none; }
   .touch { display: none; }
   .is-touch .touch { display: block; }
   .is-touch .cross, .is-touch .desk { display: none; }
@@ -207,11 +209,49 @@ function brushSound() {
 }
 
 // ---------- scene ----------
-let renderer;
-try { renderer = new THREE.WebGLRenderer({ antialias: true }); }
-catch (e) {
-  document.querySelector('.card').innerHTML = '<h1>no 3d here</h1><p>this browser has webgl turned off, so cow1 can\'t render. try another browser.</p><button onclick="location.href=\'./\'">back to the farm</button>';
-  throw e;
+// no webgl (headless bots, locked-down browsers): same game, drawn as a flat top-down map instead
+let renderer, flat = false;
+const hasGL = (() => { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { return false; } })();
+try { if (!hasGL) throw new Error('no webgl'); renderer = new THREE.WebGLRenderer({ antialias: true }); }
+catch (e) { flat = true; renderer = makeMapRenderer(); }
+if (flat) {
+  document.body.classList.add('is-flat');
+  document.getElementById('join').insertAdjacentHTML('beforebegin', '<p class="flat-note">no 3d in this browser, so you get the map view. same herd, same points. arrows or wasd move you around the map.</p>');
+}
+function makeMapRenderer() {
+  const cv = document.createElement('canvas'), g = cv.getContext('2d');
+  const r = { domElement: cv, shadowMap: {}, setPixelRatio() {}, setSize(w, h) { cv.width = w; cv.height = h; } };
+  const dot = (x, y, rad, fill, stroke) => { g.beginPath(); g.arc(x, y, rad, 0, Math.PI * 2); g.fillStyle = fill; g.fill(); if (stroke) { g.lineWidth = 2; g.strokeStyle = stroke; g.stroke(); } };
+  const tag = (x, y, text, bg = '#fffdf7') => {
+    g.font = '700 12px system-ui, sans-serif'; const w = g.measureText(text).width + 10;
+    g.fillStyle = bg; g.strokeStyle = '#2b2a28'; g.lineWidth = 1.5;
+    g.beginPath(); g.roundRect(x - w / 2, y - 22, w, 16, 6); g.fill(); g.stroke();
+    g.fillStyle = '#2b2a28'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, x, y - 14);
+  };
+  r.render = () => {
+    const W = cv.width, H = cv.height, k = Math.min(W, H) / ((FENCE + 4) * 2), ox = W / 2, oy = H / 2;
+    const X = x => ox + x * k, Y = z => oy + z * k;
+    g.fillStyle = '#7fb05a'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#8bc96b'; g.fillRect(X(-FENCE), Y(-FENCE), FENCE * 2 * k, FENCE * 2 * k);
+    g.strokeStyle = '#8a5a35'; g.lineWidth = 3; g.strokeRect(X(-FENCE), Y(-FENCE), FENCE * 2 * k, FENCE * 2 * k);
+    g.fillStyle = '#b8432f'; g.fillRect(X(BARN.x - BARN.w / 2), Y(BARN.z - BARN.d / 2), BARN.w * k, BARN.d * k);
+    g.fillStyle = '#fbf6ea'; g.font = '800 14px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('barn', X(BARN.x), Y(BARN.z));
+    for (const b of bales) if (b.visible) dot(X(b.position.x), Y(b.position.z), 0.75 * b.scale.x * k, '#e1b84d', '#a8862c');
+    dot(X(BRUSH.postX), Y(BRUSH.z), Math.max(2, BRUSH.postR * k), '#3d4146');
+    dot(X(BRUSH.x), Y(BRUSH.z), BRUSH.r * k + 2, '#2f9a45', '#1d6e30');
+    tag(X(BRUSH.x), Y(BRUSH.z) - BRUSH.r * k, 'brush', '#cdeccf');
+    for (const c of herd) { dot(X(c.position.x), Y(c.position.z), 0.8 * k, '#fbfbf7', '#2b2a28'); tag(X(c.position.x), Y(c.position.z) - 0.8 * k, c.userData.mooT > 0 ? 'moo!' : c.userData.name); }
+    for (const p of net.peers.values()) { const c = p.cow; dot(X(c.position.x), Y(c.position.z), 0.9 * k, '#fbfbf7', '#2f8a3c'); tag(X(c.position.x), Y(c.position.z) - 0.9 * k, c.userData.mooT > 0 ? p.name + ': moo!' : p.name, '#e7f5e4'); }
+    // you: a pink arrow pointing where you face
+    const px = X(player.pos.x), py = Y(player.pos.z), a = player.yaw, s = Math.max(10, 1.5 * k);
+    g.beginPath();
+    g.moveTo(px - Math.sin(a) * s * 1.4, py - Math.cos(a) * s * 1.4);
+    g.lineTo(px + Math.sin(a + 2.4) * s, py + Math.cos(a + 2.4) * s);
+    g.lineTo(px + Math.sin(a - 2.4) * s, py + Math.cos(a - 2.4) * s);
+    g.closePath(); g.fillStyle = '#f4a9b8'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#2b2a28'; g.stroke();
+    tag(px, py - s, (myName || 'you') + ' (you)', '#ffd6de');
+  };
+  return r;
 }
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -537,7 +577,7 @@ function join() {
   nameInput.blur();
   playing = true; overlay.classList.add('hidden');
   renderHud(); renderBoard();
-  if (!isTouch) {
+  if (!isTouch && !flat) {
     try { const r = renderer.domElement.requestPointerLock(); r?.catch?.(() => {}); } catch (e) {}
   }
   net.start();
@@ -806,7 +846,8 @@ function frame() {
     const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 7 : 3.6) * mag;
     fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
-    step.copy(fwd).multiplyScalar(mz).addScaledVector(right, mx).normalize().multiplyScalar(speed * dt);
+    if (flat) { step.set(mx, 0, -mz).normalize().multiplyScalar(speed * dt); player.yaw = Math.atan2(-step.x, -step.z); }
+    else step.copy(fwd).multiplyScalar(mz).addScaledVector(right, mx).normalize().multiplyScalar(speed * dt);
     player.pos.add(step);
     player.bob += dt * speed * 2.2;
   }
@@ -914,7 +955,7 @@ function frame() {
   requestAnimationFrame(frame);
 }
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-window.cow1 = { player, bales, herd, brush: BRUSH, net, board: () => board }; // handy for poking at from the console
+window.cow1 = { player, bales, herd, brush: BRUSH, net, board: () => board, flat }; // handy for poking at from the console
 frame();
 </script>
 </body>
