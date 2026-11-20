@@ -701,6 +701,8 @@ function tryEat() {
 // ---------- multiplayer: p2p webrtc via trystero (nostr relays for signaling, no server of ours) ----------
 const ROOM = new URLSearchParams(location.search).get('room') || 'pasture';
 const MAX_PEERS = 15;
+const RELAYS = ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.nostr.net', 'wss://relay.snort.social'];
+const BLOCKED_MSG = "couldn't reach the herd from this browser (its network blocks the p2p link). keep playing, your points still count here.";
 const net = {
   selfId: 'me', peers: new Map(), status: 'solo', room: null, sendState: null, sendEv: null, sendBoard: null, joinedAt: 0,
   setStatus(text) { this.status = text; netStatus.textContent = text; },
@@ -711,7 +713,9 @@ const net = {
       const { joinRoom, selfId } = await import('./vendor/trystero-nostr-0.26.0.mjs');
       if (!window.RTCPeerConnection) throw new Error('no webrtc');
       this.selfId = selfId;
-      this.room = joinRoom({ appId: 'whim.farm/cow-sim-v1', relayConfig: { urls: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.nostr.net', 'wss://relay.snort.social'] } }, ROOM);
+      this.room = joinRoom({ appId: 'whim.farm/cow-sim-v1', relayConfig: { urls: RELAYS } }, ROOM);
+      // managed/locked-down browsers can load the page but block the relays or webrtc; say so instead of "only cow online"
+      this.probe().then(ok => { this.blocked = !ok; this.updateStatus(); });
       this.joinedAt = performance.now();
       // trystero 0.26 api: actions are objects with send() and an onMessage callback
       const state = this.room.makeAction('state'), ev = this.room.makeAction('ev'), brd = this.room.makeAction('board');
@@ -734,13 +738,40 @@ const net = {
     } catch (e) {
       console.warn('multiplayer off:', e);
       this.room = null;
-      this.setStatus("couldn't reach the herd, grazing solo");
+      this.setStatus(BLOCKED_MSG);
     }
+  },
+  // can this browser reach a signaling relay and gather a webrtc candidate?
+  async probe() {
+    const relay = new Promise(res => {
+      let left = RELAYS.length;
+      for (const url of RELAYS) {
+        try {
+          const ws = new WebSocket(url);
+          ws.onopen = () => { ws.close(); res(true); };
+          ws.onerror = () => { if (--left === 0) res(false); };
+        } catch (e) { if (--left === 0) res(false); }
+      }
+      setTimeout(() => res(false), 8000);
+    });
+    const rtc = new Promise(res => {
+      try {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        pc.createDataChannel('probe');
+        pc.onicecandidate = e => { if (e.candidate && e.candidate.candidate) { res(true); pc.close(); } };
+        pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => res(false));
+        setTimeout(() => { res(false); try { pc.close(); } catch (e) {} }, 6000);
+      } catch (e) { res(false); }
+    });
+    const [a, b] = await Promise.all([relay, rtc]);
+    if (!a || !b) console.warn('herd probe:', { relay: a, webrtc: b });
+    return a && b;
   },
   updateStatus() {
     if (!this.room) return;
     const n = this.peers.size;
-    this.setStatus(n ? `herd: ${n + 1} cows online` : "herd: you're the only cow online");
+    if (n) this.setStatus(`herd: ${n + 1} cows online`);
+    else this.setStatus(this.blocked ? BLOCKED_MSG : "herd: you're the only cow online");
   },
   pushState() {
     if (!this.sendState || !playing) return;
