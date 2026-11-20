@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>be cow1 · whim.farm</title>
+<meta name="description" content="first-person cow simulator. you are cow1. eat hay, moo, pay down the lease.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐄</text></svg>">
+<style>
+  :root { --ink: #2b2a28; --paper: #fffdf7; --hay: #e8c25a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd0ff; }
+  body { font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; }
+  .hud { position: fixed; top: 12px; left: 12px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; font-size: .95rem; line-height: 1.35; pointer-events: none; font-variant-numeric: tabular-nums; }
+  .hud b { font-weight: 800; }
+  .hud .fresh { font-weight: 800; color: #2f8a3c; }
+  @media (max-width: 560px) { .hud { top: 62px; font-size: .85rem; } }
+  .back { position: fixed; top: 12px; right: 12px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; color: var(--ink); text-decoration: none; font-weight: 800; }
+  .prompt { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); background: var(--hay); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 14px; font-weight: 800; display: none; pointer-events: none; white-space: nowrap; }
+  .prompt.show { display: block; }
+  .toast { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); font-weight: 800; font-size: 1.4rem; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 6px 14px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
+  .toast.show { opacity: 1; }
+  .cross { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.35); pointer-events: none; }
+  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(30, 40, 20, .45); }
+  .overlay.hidden { display: none; }
+  .card { background: var(--paper); border: 3px solid var(--ink); border-radius: 18px; padding: 22px 24px; max-width: 380px; margin: 16px; text-align: center; box-shadow: 0 6px 0 var(--ink); }
+  .card h1 { margin: 0 0 6px; font-size: 2rem; }
+  .card p { margin: 6px 0; }
+  .card .keys { font-size: .95rem; opacity: .8; }
+  button { font: inherit; font-weight: 800; font-size: 1.15rem; padding: 12px 22px; border-radius: 14px; border: 3px solid var(--ink); background: var(--hay); color: var(--ink); cursor: pointer; box-shadow: 0 4px 0 var(--ink); margin-top: 10px; }
+  button:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+  .card label { display: block; font-weight: 800; margin: 12px 0 4px; text-align: left; }
+  .card input { font: inherit; font-size: 1.1rem; width: 100%; padding: 10px 12px; border: 3px solid var(--ink); border-radius: 12px; background: #fff; }
+  .card .howto { text-align: left; font-size: .88rem; line-height: 1.4; margin-top: 14px; opacity: .85; }
+  .card .howto p { margin: 4px 0; }
+  .board { position: fixed; top: 64px; right: 12px; width: 230px; background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; font-size: .85rem; line-height: 1.35; pointer-events: none; font-variant-numeric: tabular-nums; }
+  .board h2 { font-size: .95rem; margin: 0 0 4px; }
+  .board ol { margin: 0; padding-left: 20px; }
+  .board li { display: flex; justify-content: space-between; gap: 8px; }
+  .board li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board li.me { font-weight: 800; }
+  .board li.on span:first-child::after { content: ' ●'; color: #2f8a3c; }
+  .board .note, .board .net { font-size: .75rem; opacity: .7; margin-top: 4px; }
+  @media (max-width: 560px) { .board { top: auto; bottom: 170px; right: 8px; width: 170px; font-size: .75rem; } .is-touch .board .note { display: none; } }
+  .card .flat-note { background: #fff3c4; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px; font-size: .9rem; }
+  .is-flat .cross { display: none; }
+  .touch { display: none; }
+  .is-touch .touch { display: block; }
+  .is-touch .cross, .is-touch .desk { display: none; }
+  .stick { position: fixed; left: 24px; bottom: 24px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,253,247,.35); border: 3px solid rgba(43,42,40,.6); }
+  .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: var(--paper); border: 3px solid var(--ink); }
+  .tbtns { position: fixed; right: 20px; bottom: 28px; display: flex; flex-direction: column; gap: 12px; }
+  .tbtns button { margin: 0; min-width: 84px; }
+  .tbtns #tmoo { background: #fff; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div class="hud" id="hud"></div>
+<a class="back" href="./">back to the farm</a>
+<div class="cross" id="cross"></div>
+<div class="prompt" id="prompt"></div>
+<div class="toast" id="toast"></div>
+<div class="board" id="board" aria-live="polite">
+  <h2>all-time herd board</h2>
+  <ol id="board-list"></ol>
+  <div class="net" id="net-status">herd: connecting…</div>
+  <div class="note">scores are kept by the farm. it checks every point.</div>
+</div>
+
+<div class="touch">
+  <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
+  <div class="tbtns">
+    <button id="teat" type="button">eat</button>
+    <button id="tmoo" type="button">moo</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="card">
+    <h1>join the herd</h1>
+    <p>you're a cow in a shared pasture. other cows online show up with name tags.</p>
+    <label for="cow-name">your cow name</label>
+    <input id="cow-name" name="cow-name" aria-label="your cow name" maxlength="16" autocomplete="off" spellcheck="false">
+    <button id="join" type="button">join the herd</button>
+    <div class="howto">
+      <p class="desk">wasd or arrows walk, mouse looks (or drag), shift trots, e eats hay, space or m moos.</p>
+      <p class="touch">left stick walks, drag looks, buttons eat and moo.</p>
+      <p>points: hay bale +2. cow brush +5 (walk into it, once per 20s). moo chorus: moo within 2s of another cow's moo for +2 per cow in the chorus. whole herd at the brush +10.</p>
+      <p>points only go up. the board is all-time.</p>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+if (isTouch) document.body.classList.add('is-touch');
+
+// ---------- shared hay counter + lease math (same as the home page) ----------
+const KEY = 'cow1-hay';
+let hay = Number(localStorage.getItem(KEY) || 0);
+const BKEY = 'cow1-brushed';
+let brushed = Number(localStorage.getItem(BKEY) || 0), freshUntil = 0, lastBrushPts = -1e9;
+const P = 200, N = 60, R = 0.06 / 12;
+const PV = P * (1 - Math.pow(1 + R, -N)) / R;
+const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function liability(k) {
+  k = Math.min(k, N);
+  const g = Math.pow(1 + R, k);
+  return Math.max(0, PV * g - P * (g - 1) / R);
+}
+// ---------- names + the all-time board (the farm server keeps it and decides what each action is worth) ----------
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const cleanName = n => String(n || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 16);
+const NAME_KEY = 'whimfarm-name';
+let myName = cleanName(localStorage.getItem(NAME_KEY));
+let board = {}, session = null;
+const myPts = () => (myName && board[myName]?.pts) || 0;
+async function api(path, body) {
+  const r = await fetch('api/' + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(d.error || r.status), { status: r.status });
+  return d;
+}
+async function startSession() {
+  const s = await api('session', { name: myName, room: ROOM });
+  session = s.session; board[myName] = { pts: s.pts };
+}
+async function loadBoard() {
+  try {
+    const d = await api('board?room=' + encodeURIComponent(ROOM) + (session ? '&session=' + session : ''));
+    board = Object.fromEntries(d.board.map(r => [r.name, { pts: r.pts }]));
+    renderBoard(); renderHud();
+  } catch (e) { if (e.status === 404 && session) { session = null; startSession().catch(() => {}); } }
+}
+const hud = document.getElementById('hud');
+function renderHud() {
+  const paid = Math.min(hay, N);
+  hud.innerHTML = `<b>${esc(myName || 'cow1')}</b> · <b>${myPts().toLocaleString()}</b> pts<br>hay eaten <b>${hay.toLocaleString()}</b> · brushed <b>${brushed.toLocaleString()}</b>` +
+    `<br>lease liability <b>${usd(liability(hay))}</b>` +
+    (paid >= N ? '<br>lease paid off. still leased somehow.' : `<br>${paid} of ${N} hay payments made`) +
+    (performance.now() < freshUntil ? '<br><span class="fresh">✨ freshly brushed</span>' : '');
+}
+renderHud();
+
+// ---------- sound ----------
+let actx;
+const audio = () => (actx = actx || new (window.AudioContext || window.webkitAudioContext)());
+function mooSound(pitch = 1, vol = 0.35) {
+  try {
+    const ctx = audio(), t = ctx.currentTime, dur = 1.1;
+    const f = ctx.createBiquadFilter(), g = ctx.createGain();
+    for (const d of [0, 1.5]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime((130 + d) * pitch, t);
+      o.frequency.linearRampToValueAtTime((165 + d) * pitch, t + 0.25);
+      o.frequency.linearRampToValueAtTime((110 + d) * pitch, t + dur);
+      o.connect(f); o.start(t); o.stop(t + dur);
+    }
+    f.type = 'lowpass'; f.Q.value = 6;
+    f.frequency.setValueAtTime(400, t);
+    f.frequency.linearRampToValueAtTime(1100, t + 0.3);
+    f.frequency.linearRampToValueAtTime(350, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.12);
+    g.gain.setValueAtTime(vol, t + dur - 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    f.connect(g); g.connect(ctx.destination);
+  } catch (e) { /* no audio, still a cow */ }
+}
+function crunchSound() {
+  try {
+    const ctx = audio(), t0 = ctx.currentTime;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.12, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    for (let i = 0; i < 4; i++) {
+      const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      s.buffer = buf; f.type = 'bandpass'; f.frequency.value = 1800 + Math.random() * 1500; g.gain.value = 0.25;
+      s.connect(f); f.connect(g); g.connect(ctx.destination); s.start(t0 + i * 0.28);
+    }
+  } catch (e) {}
+}
+
+function brushSound() {
+  try {
+    const ctx = audio(), t = ctx.currentTime, dur = 1.6;
+    // motor whine spinning up and down
+    const o = ctx.createOscillator(), og = ctx.createGain(), of = ctx.createBiquadFilter();
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(45, t); o.frequency.linearRampToValueAtTime(110, t + 0.5); o.frequency.linearRampToValueAtTime(70, t + dur);
+    of.type = 'lowpass'; of.frequency.value = 500;
+    og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.12, t + 0.2); og.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(of); of.connect(og); og.connect(ctx.destination); o.start(t); o.stop(t + dur);
+    // bristles: swishy filtered noise, wobbling with the spin
+    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const n = ctx.createBufferSource(), nf = ctx.createBiquadFilter(), ng = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain();
+    n.buffer = buf; nf.type = 'bandpass'; nf.frequency.value = 3200; nf.Q.value = 0.8;
+    lfo.frequency.value = 7; lg.gain.value = 0.06; lfo.connect(lg); lg.connect(ng.gain);
+    ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.12, t + 0.15); ng.gain.setValueAtTime(0.12, t + dur - 0.5); ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    n.connect(nf); nf.connect(ng); ng.connect(ctx.destination); n.start(t); lfo.start(t); lfo.stop(t + dur);
+  } catch (e) {}
+}
+
+// ---------- scene ----------
+// no webgl (headless bots, locked-down browsers): same game, drawn as a flat top-down map instead
+let renderer, flat = false;
+const hasGL = (() => { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { return false; } })();
+try { if (!hasGL) throw new Error('no webgl'); renderer = new THREE.WebGLRenderer({ antialias: true }); }
+catch (e) { flat = true; renderer = makeMapRenderer(); }
+if (flat) {
+  document.body.classList.add('is-flat');
+  document.getElementById('join').insertAdjacentHTML('beforebegin', '<p class="flat-note">no 3d in this browser, so you get the map view. same herd, same points. arrows or wasd move you around the map.</p>');
+}
+function makeMapRenderer() {
+  const cv = document.createElement('canvas'), g = cv.getContext('2d');
+  const r = { domElement: cv, shadowMap: {}, setPixelRatio() {}, setSize(w, h) { cv.width = w; cv.height = h; } };
+  const dot = (x, y, rad, fill, stroke) => { g.beginPath(); g.arc(x, y, rad, 0, Math.PI * 2); g.fillStyle = fill; g.fill(); if (stroke) { g.lineWidth = 2; g.strokeStyle = stroke; g.stroke(); } };
+  const tag = (x, y, text, bg = '#fffdf7') => {
+    g.font = '700 12px system-ui, sans-serif'; const w = g.measureText(text).width + 10;
+    g.fillStyle = bg; g.strokeStyle = '#2b2a28'; g.lineWidth = 1.5;
+    g.beginPath(); g.roundRect(x - w / 2, y - 22, w, 16, 6); g.fill(); g.stroke();
+    g.fillStyle = '#2b2a28'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, x, y - 14);
+  };
+  r.render = () => {
+    const W = cv.width, H = cv.height, k = Math.min(W, H) / ((FENCE + 4) * 2), ox = W / 2, oy = H / 2;
+    const X = x => ox + x * k, Y = z => oy + z * k;
+    g.fillStyle = '#7fb05a'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#8bc96b'; g.fillRect(X(-FENCE), Y(-FENCE), FENCE * 2 * k, FENCE * 2 * k);
+    g.strokeStyle = '#8a5a35'; g.lineWidth = 3; g.strokeRect(X(-FENCE), Y(-FENCE), FENCE * 2 * k, FENCE * 2 * k);
+    g.fillStyle = '#b8432f'; g.fillRect(X(BARN.x - BARN.w / 2), Y(BARN.z - BARN.d / 2), BARN.w * k, BARN.d * k);
+    g.fillStyle = '#fbf6ea'; g.font = '800 14px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('barn', X(BARN.x), Y(BARN.z));
+    for (const b of bales) if (b.visible) dot(X(b.position.x), Y(b.position.z), 0.75 * b.scale.x * k, '#e1b84d', '#a8862c');
+    dot(X(BRUSH.postX), Y(BRUSH.z), Math.max(2, BRUSH.postR * k), '#3d4146');
+    dot(X(BRUSH.x), Y(BRUSH.z), BRUSH.r * k + 2, '#2f9a45', '#1d6e30');
+    tag(X(BRUSH.x), Y(BRUSH.z) - BRUSH.r * k, 'brush', '#cdeccf');
+    for (const c of herd) { dot(X(c.position.x), Y(c.position.z), 0.8 * k, '#fbfbf7', '#2b2a28'); tag(X(c.position.x), Y(c.position.z) - 0.8 * k, c.userData.mooT > 0 ? 'moo!' : c.userData.name); }
+    for (const p of net.peers.values()) { const c = p.cow; dot(X(c.position.x), Y(c.position.z), 0.9 * k, '#fbfbf7', '#2f8a3c'); tag(X(c.position.x), Y(c.position.z) - 0.9 * k, c.userData.mooT > 0 ? p.name + ': moo!' : p.name, '#e7f5e4'); }
+    // you: a pink arrow pointing where you face
+    const px = X(player.pos.x), py = Y(player.pos.z), a = player.yaw, s = Math.max(10, 1.5 * k);
+    g.beginPath();
+    g.moveTo(px - Math.sin(a) * s * 1.4, py - Math.cos(a) * s * 1.4);
+    g.lineTo(px + Math.sin(a + 2.4) * s, py + Math.cos(a + 2.4) * s);
+    g.lineTo(px + Math.sin(a - 2.4) * s, py + Math.cos(a - 2.4) * s);
+    g.closePath(); g.fillStyle = '#f4a9b8'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#2b2a28'; g.stroke();
+    tag(px, py - s, (myName || 'you') + ' (you)', '#ffd6de');
+  };
+  return r;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const SKY = new THREE.Color('#bfe3ff');
+scene.fog = new THREE.Fog(SKY, 60, 190);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 400);
+camera.rotation.order = 'YXZ';
+scene.add(camera);
+
+// sky dome
+scene.add(new THREE.Mesh(
+  new THREE.SphereGeometry(300, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, fog: false, depthWrite: false,
+    uniforms: { top: { value: new THREE.Color('#5fa8f0') }, bottom: { value: SKY } },
+    vertexShader: 'varying vec3 p; void main(){ p = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying vec3 p; void main(){ gl_FragColor = vec4(mix(bottom, top, clamp(p.y*1.6,0.0,1.0)),1.0); }',
+  })
+));
+
+scene.add(new THREE.HemisphereLight('#dff1ff', '#5d8a3c', 1.1));
+const sun = new THREE.DirectionalLight('#fff4dc', 2.2);
+sun.position.set(40, 60, 25);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 160 });
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+const mat = c => new THREE.MeshLambertMaterial({ color: c });
+const box = (w, h, d, m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.castShadow = o.receiveShadow = true; return o; };
+
+// ground
+const groundGeo = new THREE.PlaneGeometry(420, 420, 84, 84);
+groundGeo.rotateX(-Math.PI / 2);
+{
+  const pos = groundGeo.attributes.position, cols = [];
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), r = Math.hypot(x, z);
+    if (r > 70) pos.setY(i, (Math.sin(x * 0.03) + Math.cos(z * 0.025)) * Math.min(1, (r - 70) / 60) * 9);
+    c.setHSL(0.27 + Math.random() * 0.03, 0.5, 0.38 + Math.random() * 0.06);
+    cols.push(c.r, c.g, c.b);
+  }
+  groundGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  groundGeo.computeVertexNormals();
+}
+const ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+ground.receiveShadow = true;
+scene.add(ground);
+
+// grass tufts
+const FENCE = 45;
+{
+  const n = isTouch ? 3500 : 9000;
+  const geo = new THREE.ConeGeometry(0.06, 0.55, 3); geo.translate(0, 0.27, 0);
+  const grass = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial(), n);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    p.set((Math.random() * 2 - 1) * 75, 0, (Math.random() * 2 - 1) * 75);
+    e.set((Math.random() - .5) * .5, Math.random() * 6.28, (Math.random() - .5) * .5);
+    const h = 0.6 + Math.random() * 0.9; s.set(1, h, 1);
+    grass.setMatrixAt(i, m.compose(p, q.setFromEuler(e), s));
+    grass.setColorAt(i, c.setHSL(0.24 + Math.random() * 0.07, 0.55, 0.32 + Math.random() * 0.15));
+  }
+  scene.add(grass);
+}
+
+// flowers
+{
+  const geo = new THREE.SphereGeometry(0.09, 6, 4);
+  const cols = ['#ffffff', '#ffe066', '#ff9ec7', '#c9a0ff'];
+  for (const col of cols) {
+    const n = 120, im = new THREE.InstancedMesh(geo, mat(col), n), m = new THREE.Matrix4();
+    for (let i = 0; i < n; i++) im.setMatrixAt(i, m.makeTranslation((Math.random() * 2 - 1) * FENCE, 0.35, (Math.random() * 2 - 1) * FENCE));
+    scene.add(im);
+  }
+}
+
+// fence
+{
+  const wood = mat('#8a5a35');
+  const postGeo = new THREE.BoxGeometry(0.25, 1.6, 0.25);
+  const posts = [];
+  for (let t = -FENCE; t <= FENCE; t += 3) posts.push([t, -FENCE], [t, FENCE], [-FENCE, t], [FENCE, t]);
+  const im = new THREE.InstancedMesh(postGeo, wood, posts.length), m = new THREE.Matrix4();
+  posts.forEach(([x, z], i) => im.setMatrixAt(i, m.makeTranslation(x, 0.8, z)));
+  im.castShadow = true; scene.add(im);
+  for (const y of [0.6, 1.25]) {
+    for (const z of [-FENCE, FENCE]) { const r = box(FENCE * 2, 0.14, 0.08, wood); r.position.set(0, y, z); scene.add(r); }
+    for (const x of [-FENCE, FENCE]) { const r = box(0.08, 0.14, FENCE * 2, wood); r.position.set(x, y, 0); scene.add(r); }
+  }
+}
+
+// barn
+const BARN = { x: -18, z: -30, w: 14, d: 11, h: 7 };
+// cow brush on its own post, well clear of the barn so cows can walk all the way around it
+const BRUSH = { x: BARN.x - 3, z: BARN.z + BARN.d / 2 + 7, r: 0.55, postX: BARN.x - 3 - 1.5, postR: 0.15, spin: 0, angle: 0, touching: false, lastTouch: -99 };
+{
+  const g = new THREE.Group(); g.position.set(BARN.x, 0, BARN.z);
+  const red = mat('#b8432f'), white = mat('#fbf6ea'), roofM = mat('#5a2a22');
+  const walls = box(BARN.w, BARN.h, BARN.d, red); walls.position.y = BARN.h / 2; g.add(walls);
+  const tri = new THREE.Shape(); tri.moveTo(-BARN.w / 2, 0); tri.lineTo(BARN.w / 2, 0); tri.lineTo(0, 4.2); tri.closePath();
+  const gable = new THREE.Mesh(new THREE.ExtrudeGeometry(tri, { depth: BARN.d, bevelEnabled: false }), red);
+  gable.position.set(0, BARN.h, -BARN.d / 2); gable.castShadow = true; g.add(gable);
+  const slope = Math.hypot(BARN.w / 2, 4.2) + 0.6, ang = Math.atan2(4.2, BARN.w / 2);
+  for (const sgn of [-1, 1]) {
+    const r = box(slope, 0.3, BARN.d + 1, roofM);
+    r.position.set(sgn * BARN.w / 4, BARN.h + 2.1 + 0.15, 0); r.rotation.z = -sgn * ang; g.add(r);
+  }
+  const door = box(5, 5, 0.2, white); door.position.set(0, 2.5, BARN.d / 2 + 0.05); g.add(door);
+  const doorIn = box(4.2, 4.4, 0.25, red); doorIn.position.set(0, 2.4, BARN.d / 2 + 0.08); g.add(doorIn);
+  for (const s of [-1, 1]) { const x = box(0.25, 6, 0.3, white); x.position.set(0, 2.4, BARN.d / 2 + 0.12); x.rotation.z = s * 0.76; g.add(x); }
+  const loft = box(2.4, 1.8, 0.2, white); loft.position.set(0, BARN.h + 1.2, BARN.d / 2 + 0.05); g.add(loft);
+  // sign
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128;
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fbf6ea'; cx.fillRect(0, 0, 512, 128);
+  cx.fillStyle = '#2b2a28'; cx.font = '800 72px system-ui, sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('whim.farm', 256, 68);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(6, 1.5), new THREE.MeshLambertMaterial({ map: new THREE.CanvasTexture(cv) }));
+  sign.position.set(0, BARN.h - 1, BARN.d / 2 + 0.12); g.add(sign);
+  scene.add(g);
+}
+
+// trees + hills out past the fence
+{
+  const trunk = mat('#6b4426'), leaf = mat('#3f7d3a');
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2, r = 60 + Math.random() * 60;
+    const t = new THREE.Group(); t.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+    const tr = box(0.6, 3, 0.6, trunk); tr.position.y = 1.5; t.add(tr);
+    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.4 + Math.random(), 0), leaf);
+    crown.position.y = 4.4; crown.castShadow = true; t.add(crown);
+    scene.add(t);
+  }
+}
+
+// clouds
+const clouds = [];
+{
+  const cm = new THREE.MeshLambertMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.35 });
+  for (let i = 0; i < 14; i++) {
+    const c = new THREE.Group();
+    for (let j = 0; j < 5; j++) {
+      const s = new THREE.Mesh(new THREE.SphereGeometry(3 + Math.random() * 3, 10, 8), cm);
+      s.position.set(j * 4 - 8, Math.random() * 2, Math.random() * 3); c.add(s);
+    }
+    c.position.set((Math.random() * 2 - 1) * 180, 45 + Math.random() * 25, (Math.random() * 2 - 1) * 180);
+    clouds.push(c); scene.add(c);
+  }
+}
+
+// ---------- cows ----------
+function label(text, bg = '#fffdf7') {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96;
+  const c = cv.getContext('2d');
+  c.fillStyle = bg; c.strokeStyle = '#2b2a28'; c.lineWidth = 8;
+  c.beginPath(); c.roundRect(8, 8, 240, 80, 30); c.fill(); c.stroke();
+  c.fillStyle = '#2b2a28'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  let fs = 48; do c.font = `800 ${fs}px system-ui, sans-serif`; while (c.measureText(text).width > 220 && (fs -= 2) > 16);
+  c.fillText(text, 128, 50);
+  return new THREE.CanvasTexture(cv);
+}
+const white = mat('#fbfbf7'), black = mat('#2b2a28'), pink = mat('#f4a9b8'), horn = mat('#e8d8b0'), tagM = mat('#f2c94c');
+function makeCow(name) {
+  const cow = new THREE.Group();
+  const body = box(1.1, 1.0, 2.2, white); body.position.y = 1.15; cow.add(body);
+  for (let i = 0; i < 4; i++) {
+    const s = box(0.02 + 1.12, 0.35 + Math.random() * 0.3, 0.4 + Math.random() * 0.4, black);
+    s.position.set(0, 1.1 + (Math.random() - .5) * 0.5, (Math.random() - .5) * 1.6); cow.add(s);
+  }
+  for (const [x, z] of [[-.38, .8], [.38, .8], [-.38, -.8], [.38, -.8]]) {
+    const l = box(0.25, 0.75, 0.25, white); l.position.set(x, 0.38, z); cow.add(l);
+    const h = box(0.27, 0.15, 0.27, black); h.position.set(x, 0.07, z); cow.add(h);
+  }
+  const udder = box(0.45, 0.2, 0.4, pink); udder.position.set(0, 0.6, -0.5); cow.add(udder);
+  const head = new THREE.Group(); head.position.set(0, 1.55, 1.25); cow.add(head);
+  head.add(box(0.7, 0.65, 0.7, white));
+  const snout = box(0.6, 0.35, 0.25, pink); snout.position.set(0, -0.15, 0.42); head.add(snout);
+  for (const s of [-1, 1]) {
+    const e = box(0.08, 0.1, 0.02, black); e.position.set(s * 0.2, 0.1, 0.36); head.add(e);
+    const ear = box(0.3, 0.12, 0.15, white); ear.position.set(s * 0.48, 0.15, 0); head.add(ear);
+    const hr = box(0.1, 0.25, 0.1, horn); hr.position.set(s * 0.22, 0.42, -0.05); head.add(hr);
+  }
+  const tag = box(0.04, 0.16, 0.14, tagM); tag.position.set(0.64, 0.08, 0); head.add(tag);
+  const tail = box(0.08, 0.8, 0.08, white); tail.position.set(0, 1.0, -1.12); tail.rotation.x = 0.2; cow.add(tail);
+  const tuft = box(0.14, 0.2, 0.14, black); tuft.position.set(0, 0.55, -1.2); cow.add(tuft);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: label(name), depthWrite: false }));
+  sprite.scale.set(1.4, 0.52, 1); sprite.position.y = 2.6; cow.add(sprite);
+  cow.userData = { head, tail, sprite, name, nameTex: sprite.material.map };
+  return cow;
+}
+
+const herd = [];
+for (let i = 2; i <= 6; i++) {
+  const c = makeCow('cow' + i);
+  c.position.set((Math.random() * 2 - 1) * 30, 0, (Math.random() * 2 - 1) * 20 + 8);
+  c.rotation.y = Math.random() * 6.28;
+  Object.assign(c.userData, { target: null, wait: Math.random() * 3, speed: 1 + Math.random() * 0.6, mooTex: null, mooT: 0, phase: Math.random() * 6 });
+  herd.push(c); scene.add(c);
+}
+const randomSpot = (m = 6) => new THREE.Vector3((Math.random() * 2 - 1) * (FENCE - m), 0, (Math.random() * 2 - 1) * (FENCE - m));
+const inBarn = (x, z, pad) => Math.abs(x - BARN.x) < BARN.w / 2 + pad && Math.abs(z - BARN.z) < BARN.d / 2 + pad;
+const nearBrush = (x, z, pad) => Math.hypot(x - BRUSH.x, z - BRUSH.z) < BRUSH.r + pad || Math.hypot(x - BRUSH.postX, z - BRUSH.z) < BRUSH.postR + pad;
+const blocked = (x, z, pad) => inBarn(x, z, pad) || nearBrush(x, z, pad);
+
+// ---------- hay bales ----------
+const hayTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const c = cv.getContext('2d'); c.fillStyle = '#e1b84d'; c.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 500; i++) { c.strokeStyle = Math.random() < .5 ? '#c99a32' : '#f2d37a'; c.lineWidth = 1 + Math.random() * 2; const x = Math.random() * 128, y = Math.random() * 128; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.random() * 20 - 10, y + Math.random() * 6 - 3); c.stroke(); }
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1); return t;
+})();
+const hayM = new THREE.MeshLambertMaterial({ map: hayTex });
+const bales = [];
+function placeBale(b) {
+  let p; do p = randomSpot(4); while (blocked(p.x, p.z, 3) || p.length() < 4);
+  b.position.set(p.x, 0.75, p.z); b.rotation.y = Math.random() * 6.28; b.scale.setScalar(1);
+  b.visible = true; b.userData.eaten = 0; b.userData.respawn = 0;
+}
+for (let i = 0; i < 12; i++) {
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 1.3, 20), hayM);
+  b.rotation.order = 'YXZ'; b.castShadow = b.receiveShadow = true;
+  b.geometry.rotateZ(Math.PI / 2);
+  placeBale(b); bales.push(b); scene.add(b);
+}
+// a little stack by the barn
+for (let i = 0; i < 3; i++) {
+  const b = box(1.8, 0.9, 1, hayM); b.position.set(BARN.x + BARN.w / 2 + 1.5, 0.45 + (i === 2 ? 0.9 : 0), BARN.z + 3 + (i === 1 ? 1.1 : i === 2 ? 0.55 : 0)); scene.add(b);
+}
+
+// cow brush, hung from a steel post like the j&d smart cow brush
+const brush = new THREE.Group();
+{
+  const steel = mat('#3d4146'), grey = mat('#7c838b'), shaftM = mat('#b9bec4');
+  const armY = 3.2, armLen = BRUSH.x - BRUSH.postX + 0.5;
+  const post = box(BRUSH.postR * 2, armY + 0.2, BRUSH.postR * 2, steel); post.position.set(BRUSH.postX, (armY + 0.2) / 2, BRUSH.z); scene.add(post);
+  const foot = box(0.8, 0.08, 0.8, steel); foot.position.set(BRUSH.postX, 0.04, BRUSH.z); scene.add(foot);
+  const arm = box(armLen, 0.22, 0.2, steel); arm.position.set(BRUSH.postX + armLen / 2, armY, BRUSH.z); scene.add(arm);
+  const brace = box(0.06, Math.hypot(0.9, 1.5), 0.06, steel); brace.position.set(BRUSH.postX + 0.45, armY - 0.75, BRUSH.z); brace.rotation.z = -Math.atan2(0.9, 1.5); scene.add(brace);
+  // label on the arm
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 64;
+  const cx = cv.getContext('2d'); cx.fillStyle = '#3d4146'; cx.fillRect(0, 0, 512, 64);
+  cx.fillStyle = '#fff'; cx.font = 'italic 800 34px system-ui, sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('Smart Cow Brush', 256, 34);
+  const lab = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv) }));
+  for (const sgn of [-1, 1]) { const l = lab.clone(); l.scale.x = Math.min(1, (armLen - 0.4) / 1.9); l.position.set(BRUSH.postX + armLen / 2 - 0.15, armY, BRUSH.z + sgn * 0.101); l.rotation.y = sgn > 0 ? 0 : Math.PI; scene.add(l); }
+  // motor + gearbox on top, over the brush
+  const gear = box(0.4, 0.34, 0.45, grey); gear.position.set(BRUSH.x, armY + 0.28, BRUSH.z); scene.add(gear);
+  const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.7, 16), grey); motor.rotation.z = Math.PI / 2;
+  motor.position.set(BRUSH.x - 0.5, armY + 0.3, BRUSH.z); motor.castShadow = true; scene.add(motor);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.08, 16), steel); cap.rotation.z = Math.PI / 2; cap.position.set(BRUSH.x - 0.86, armY + 0.3, BRUSH.z); scene.add(cap);
+  // spinning part: shaft + hourglass bristle roll
+  brush.position.set(BRUSH.x, 0, BRUSH.z);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, armY - 2.0, 10), shaftM); shaft.position.y = (armY + 2.0) / 2; brush.add(shaft);
+  const pts = [];
+  for (let i = 0; i <= 16; i++) { const y = i / 16; pts.push(new THREE.Vector2(BRUSH.r - 0.14 * Math.sin(y * Math.PI), 0.45 + y * 1.55)); }
+  const bristleTex = (() => {
+    const c2 = document.createElement('canvas'); c2.width = 256; c2.height = 256; const g = c2.getContext('2d');
+    g.fillStyle = '#2f9a45'; g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 2600; i++) { g.fillStyle = ['#1f7a34', '#45b75a', '#2a8c3e', '#63c96f'][i % 4]; g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2 + Math.random() * 3); }
+    g.fillStyle = 'rgba(20,70,30,.55)'; for (let k = 0; k < 8; k++) g.fillRect(k * 32, 0, 4, 256); // tuft rows so the spin reads
+    const t = new THREE.CanvasTexture(c2); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 2); return t;
+  })();
+  const roll = new THREE.Mesh(new THREE.LatheGeometry(pts, 28), new THREE.MeshLambertMaterial({ map: bristleTex }));
+  roll.castShadow = true; brush.add(roll);
+  // bristle fuzz: two see-through shells of green tips so the edge looks hairy, not smooth
+  const tips = document.createElement('canvas'); tips.width = tips.height = 256;
+  const tg = tips.getContext('2d');
+  for (let i = 0; i < 1800; i++) { tg.fillStyle = ['#2a8c3e', '#45b75a', '#63c96f'][i % 3]; tg.fillRect(Math.random() * 256, Math.random() * 256, 2, 3); }
+  const tipTex = new THREE.CanvasTexture(tips); tipTex.wrapS = tipTex.wrapT = THREE.RepeatWrapping; tipTex.repeat.set(3, 3);
+  const fuzzM = new THREE.MeshLambertMaterial({ map: tipTex, alphaTest: 0.5, transparent: false, side: THREE.DoubleSide });
+  for (const k of [0.05, 0.1]) {
+    const shell = new THREE.Mesh(new THREE.LatheGeometry(pts.map(v => new THREE.Vector2(v.x + k, v.y)), 28), fuzzM);
+    shell.rotation.y = k * 20; brush.add(shell);
+  }
+  for (const y of [0.45, 2.0]) { const d = new THREE.Mesh(new THREE.CylinderGeometry(BRUSH.r, BRUSH.r, 0.04, 28), mat('#1d6e30')); d.position.y = y; brush.add(d); }
+  scene.add(brush);
+}
+
+// ---------- you (cow1) ----------
+const player = { pos: new THREE.Vector3(0, 0, 14), yaw: 0, pitch: -0.1, bob: 0, eating: null, eatT: 0 };
+const EYE = 1.55;
+// your own snout at the bottom of the view
+const snout = new THREE.Group();
+{
+  const s = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), pink);
+  s.scale.set(0.34, 0.12, 0.2); snout.add(s);
+  for (const x of [-0.12, 0.12]) { const n = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 6), black); n.scale.set(1, 0.5, 1.5); n.position.set(x, 0.1, -0.12); snout.add(n); }
+  snout.position.set(0, -0.5, -0.62);
+  camera.add(snout);
+}
+
+// ---------- input ----------
+const keys = new Set();
+const overlay = document.getElementById('overlay');
+let playing = false, locked = false;
+addEventListener('keydown', e => {
+  if (!playing) return;
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  keys.add(e.code);
+  if ((e.code === 'Space' || e.code === 'KeyM') && !e.repeat) moo();
+  if (e.code === 'KeyE' && !e.repeat) tryEat();
+});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+
+function look(dx, dy, k) {
+  player.yaw -= dx * k; player.pitch = Math.max(-1.3, Math.min(1.1, player.pitch - dy * k));
+}
+const nameInput = document.getElementById('cow-name');
+const defaultName = 'cow-' + Math.random().toString(36).slice(2, 6);
+nameInput.value = myName; nameInput.placeholder = defaultName;
+function join() {
+  audio().resume?.();
+  myName = cleanName(nameInput.value) || defaultName;
+  localStorage.setItem(NAME_KEY, myName);
+  if (!board[myName]) board[myName] = { pts: 0 };
+  startSession().then(loadBoard).catch(e => console.warn('score server:', e));
+  nameInput.blur();
+  playing = true; overlay.classList.add('hidden');
+  renderHud(); renderBoard();
+  if (!isTouch && !flat) {
+    try { const r = renderer.domElement.requestPointerLock(); r?.catch?.(() => {}); } catch (e) {}
+  }
+  net.start();
+}
+document.getElementById('join').addEventListener('click', join);
+nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
+document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === renderer.domElement; });
+let drag = null;
+renderer.domElement.addEventListener('mousedown', e => {
+  if (!playing || isTouch) return;
+  if (!locked) { try { const r = renderer.domElement.requestPointerLock(); r?.catch?.(() => {}); } catch (e) {} drag = { x: e.clientX, y: e.clientY }; }
+});
+addEventListener('mouseup', () => (drag = null));
+addEventListener('mousemove', e => {
+  if (!playing) return;
+  if (locked) look(e.movementX, e.movementY, 0.0022);
+  else if (drag) { look(e.clientX - drag.x, e.clientY - drag.y, 0.005); drag = { x: e.clientX, y: e.clientY }; }
+});
+
+// touch: left stick to walk, drag anywhere else to look
+const stick = document.getElementById('stick'), knob = document.getElementById('knob');
+const move = { x: 0, y: 0 };
+let stickId = null, lookId = null, lookLast = null;
+function stickAt(t) {
+  const r = stick.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let dx = t.clientX - cx, dy = t.clientY - cy; const m = Math.hypot(dx, dy), max = r.width / 2;
+  if (m > max) { dx *= max / m; dy *= max / m; }
+  knob.style.transform = `translate(${dx}px, ${dy}px)`; move.x = dx / max; move.y = dy / max;
+}
+stick.addEventListener('touchstart', e => { e.preventDefault(); const t = e.changedTouches[0]; stickId = t.identifier; stickAt(t); }, { passive: false });
+renderer.domElement.addEventListener('touchstart', e => { e.preventDefault(); const t = e.changedTouches[0]; if (lookId === null) { lookId = t.identifier; lookLast = { x: t.clientX, y: t.clientY }; } }, { passive: false });
+addEventListener('touchmove', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === stickId) stickAt(t);
+    else if (t.identifier === lookId && playing) { look(t.clientX - lookLast.x, t.clientY - lookLast.y, 0.006); lookLast = { x: t.clientX, y: t.clientY }; }
+  }
+}, { passive: false });
+addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === stickId) { stickId = null; move.x = move.y = 0; knob.style.transform = ''; }
+    if (t.identifier === lookId) lookId = null;
+  }
+});
+document.getElementById('tmoo').addEventListener('click', () => playing && moo());
+document.getElementById('teat').addEventListener('click', () => playing && tryEat());
+
+// ---------- points ----------
+const boardList = document.getElementById('board-list'), netStatus = document.getElementById('net-status');
+// the client only says what happened; the server checks it and says how many points it was worth
+async function award(kind, why, chorus) {
+  if (!myName) return;
+  for (let tries = 0; tries < 2; tries++) {
+    try {
+      if (!session) await startSession();
+      const d = await api('points', { session, kind, chorus });
+      board[myName] = { pts: d.pts };
+      renderHud(); renderBoard();
+      if (why) toast(`${why} +${d.awarded}`, 1600);
+      return;
+    } catch (e) {
+      if (e.status === 404) { session = null; continue; }
+      if (why && e.status !== 429) toast(why, 1600);
+      return;
+    }
+  }
+}
+setInterval(loadBoard, 10000);
+function renderBoard() {
+  const online = new Set([myName, ...[...net.peers.values()].map(p => p.name)]);
+  const rows = Object.entries(board).sort((a, b) => b[1].pts - a[1].pts).slice(0, 10);
+  if (myName && !rows.some(([n]) => n === myName)) rows.push([myName, board[myName] || { pts: 0 }]);
+  boardList.replaceChildren(...rows.map(([n, v]) => {
+    const li = document.createElement('li');
+    if (n === myName) li.classList.add('me');
+    if (online.has(n)) li.classList.add('on');
+    const a = document.createElement('span'), b = document.createElement('span');
+    a.textContent = n; b.textContent = v.pts.toLocaleString();
+    li.append(a, b); return li;
+  }));
+}
+// moo chorus: moos from different cows less than 2s apart chain together
+const chorus = [];
+function noteMoo(who) {
+  const now = performance.now();
+  if (chorus.length && now - chorus[chorus.length - 1].t > 2000) chorus.length = 0;
+  chorus.push({ who, t: now });
+  return new Set(chorus.map(m => m.who)).size;
+}
+let lastHerdUp = -1e9;
+
+// ---------- actions ----------
+const toastEl = document.getElementById('toast'), promptEl = document.getElementById('prompt');
+let toastTimer;
+function toast(t, ms = 1200) { toastEl.textContent = t; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms); }
+
+let lastMoo = 0;
+function moo() {
+  if (performance.now() - lastMoo < 500) return;
+  lastMoo = performance.now();
+  const words = ['moo', 'mooo', 'MOO', 'moo?', 'mooooo'];
+  toast(words[Math.floor(Math.random() * words.length)]);
+  net.send({ t: 'moo' });
+  const k = noteMoo(net.selfId);
+  if (k >= 2) award('chorus', `moo chorus x${k}!`, k);
+  mooSound(1, 0.35);
+  // the nearest cow answers
+  let best = null, bd = Infinity;
+  for (const c of herd) { const d = c.position.distanceTo(player.pos); if (d < bd) { bd = d; best = c; } }
+  if (best && bd < 35) setTimeout(() => cowMoo(best, Math.max(0.05, 0.3 - bd / 140)), 600 + Math.random() * 700);
+}
+function cowMoo(c, vol = 0.2) {
+  const u = c.userData;
+  u.mooTex = u.mooTex || label('moo!', '#e8c25a');
+  u.sprite.material.map = u.mooTex; u.mooT = 1.6;
+  mooSound(0.85 + Math.random() * 0.35, vol);
+}
+function nearestBale() {
+  let best = null, bd = 2.8;
+  for (const b of bales) {
+    if (!b.visible || b.userData.eaten) continue;
+    const d = Math.hypot(b.position.x - player.pos.x, b.position.z - player.pos.z);
+    if (d < bd) { bd = d; best = b; }
+  }
+  return best;
+}
+function tryEat() {
+  if (player.eating) return;
+  const b = nearestBale();
+  if (!b) { toast('no hay here. find a bale.'); return; }
+  player.eating = b; player.eatT = 0; b.userData.eaten = 1; crunchSound();
+}
+
+// ---------- multiplayer: p2p webrtc via trystero (nostr relays for signaling, no server of ours) ----------
+const ROOM = new URLSearchParams(location.search).get('room') || 'pasture';
+const MAX_PEERS = 15;
+const RELAYS = ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.nostr.net', 'wss://relay.snort.social'];
+const BLOCKED_MSG = "couldn't reach the herd from this browser (its network blocks the p2p link). keep playing, your points still count here.";
+const net = {
+  selfId: 'me', peers: new Map(), status: 'solo', room: null, sendState: null, sendEv: null, joinedAt: 0,
+  setStatus(text) { this.status = text; netStatus.textContent = text; },
+  async start() {
+    if (this.room) return;
+    this.setStatus('herd: connecting…');
+    try {
+      const { joinRoom, selfId } = await import('./vendor/trystero-nostr-0.26.0.mjs');
+      if (!window.RTCPeerConnection) throw new Error('no webrtc');
+      this.selfId = selfId;
+      this.room = joinRoom({ appId: 'whim.farm/cow-sim-v1', relayConfig: { urls: RELAYS } }, ROOM);
+      // managed/locked-down browsers can load the page but block the relays or webrtc; say so instead of "only cow online"
+      this.probe().then(ok => { this.blocked = !ok; this.updateStatus(); });
+      this.joinedAt = performance.now();
+      // trystero 0.26 api: actions are objects with send() and an onMessage callback
+      const state = this.room.makeAction('state'), ev = this.room.makeAction('ev');
+      this.sendState = d => state.send(d).catch(() => {});
+      this.sendEv = d => ev.send(d).catch(() => {});
+      state.onMessage = (d, ctx) => this.onState(d, ctx.peerId);
+      ev.onMessage = (d, ctx) => this.onEv(d, ctx.peerId);
+      this.room.onPeerJoin = () => this.updateStatus();
+      this.room.onPeerLeave = id => this.drop(id);
+      this.updateStatus();
+      this.lastPush = 0;
+      // room cap: if the pasture is already full when we arrive, step out and graze solo
+      setTimeout(() => {
+        const ids = Object.keys(this.room.getPeers?.() || {});
+        if (ids.length >= MAX_PEERS + 1) { this.room.leave(); this.room = null; this.peers.forEach((_, id) => this.drop(id)); this.setStatus('herd is full (16 cows), grazing solo'); }
+      }, 6000);
+    } catch (e) {
+      console.warn('multiplayer off:', e);
+      this.room = null;
+      this.setStatus(BLOCKED_MSG);
+    }
+  },
+  // can this browser reach a signaling relay and gather a webrtc candidate?
+  async probe() {
+    const relay = new Promise(res => {
+      let left = RELAYS.length;
+      for (const url of RELAYS) {
+        try {
+          const ws = new WebSocket(url);
+          ws.onopen = () => { ws.close(); res(true); };
+          ws.onerror = () => { if (--left === 0) res(false); };
+        } catch (e) { if (--left === 0) res(false); }
+      }
+      setTimeout(() => res(false), 8000);
+    });
+    const rtc = new Promise(res => {
+      try {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        pc.createDataChannel('probe');
+        pc.onicecandidate = e => { if (e.candidate && e.candidate.candidate) { res(true); pc.close(); } };
+        pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => res(false));
+        setTimeout(() => { res(false); try { pc.close(); } catch (e) {} }, 6000);
+      } catch (e) { res(false); }
+    });
+    const [a, b] = await Promise.all([relay, rtc]);
+    if (!a || !b) console.warn('herd probe:', { relay: a, webrtc: b });
+    return a && b;
+  },
+  updateStatus() {
+    if (!this.room) return;
+    const n = this.peers.size;
+    if (n) this.setStatus(`herd: ${n + 1} cows online`);
+    else this.setStatus(this.blocked ? BLOCKED_MSG : "herd: you're the only cow online");
+  },
+  pushState() {
+    if (!this.sendState || !playing) return;
+    this.sendState({ n: myName, x: +player.pos.x.toFixed(2), z: +player.pos.z.toFixed(2), y: +player.yaw.toFixed(3), e: player.eating ? 1 : 0 });
+  },
+  send(ev) { if (this.sendEv) this.sendEv(ev); },
+  onState(d, id) {
+    if (!d || typeof d !== 'object') return;
+    let p = this.peers.get(id);
+    if (!p) {
+      if (this.peers.size >= MAX_PEERS) return;
+      const name = cleanName(d.n) || 'cow-' + String(id).slice(0, 4);
+      const cow = makeCow(name);
+      cow.userData.phase = Math.random() * 6; cow.userData.fx = {};
+      p = { id, name, cow, x: 0, z: 0, yaw: 0, last: 0, eating: 0 };
+      cow.position.set(Number(d.x) || 0, 0, Number(d.z) || 0);
+      scene.add(cow); this.peers.set(id, p); this.updateStatus(); renderBoard();
+    }
+    const name = cleanName(d.n);
+    if (name && name !== p.name) { p.name = name; p.cow.userData.nameTex = label(name); p.cow.userData.sprite.material.map = p.cow.userData.nameTex; renderBoard(); }
+    const lim = FENCE;
+    const num = (v, def) => (Number.isFinite(Number(v)) ? Number(v) : def);
+    p.x = Math.max(-lim, Math.min(lim, num(d.x, p.x))); p.z = Math.max(-lim, Math.min(lim, num(d.z, p.z)));
+    p.yaw = num(d.y, p.yaw); p.eating = d.e ? 1 : 0; p.last = performance.now();
+  },
+  onEv(d, id) {
+    const p = this.peers.get(id);
+    if (!p || !d) return;
+    const dist = Math.hypot(p.x - player.pos.x, p.z - player.pos.z);
+    if (d.t === 'moo') {
+      cowMoo(p.cow, Math.max(0.04, 0.35 - dist / 120));
+      const k = noteMoo(id);
+      if (k >= 2) toast(`moo chorus x${k}!`, 1400);
+    } else if (d.t === 'eat' || d.t === 'brush') {
+      const u = p.cow.userData;
+      u.fx[d.t] ||= label(d.t === 'eat' ? 'nom' : 'brushed ✨', '#e8c25a');
+      u.sprite.material.map = u.fx[d.t]; u.mooT = 1.6;
+    }
+  },
+  drop(id) {
+    const p = this.peers.get(id);
+    if (!p) return;
+    scene.remove(p.cow); this.peers.delete(id); this.updateStatus(); renderBoard();
+  },
+  tick(dt, t) {
+    const now = performance.now();
+    for (const [id, p] of this.peers) {
+      if (now - p.last > 6000) { this.drop(id); continue; }
+      const c = p.cow, u = c.userData, k = Math.min(1, dt * 10);
+      const moving = Math.hypot(p.x - c.position.x, p.z - c.position.z) > 0.05;
+      c.position.x += (p.x - c.position.x) * k; c.position.z += (p.z - c.position.z) * k;
+      c.position.y = moving ? Math.abs(Math.sin(t * 8)) * 0.04 : 0;
+      // a player's yaw faces -z at 0; the cow model faces +z
+      const want = p.yaw + Math.PI;
+      let diff = want - c.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      c.rotation.y += diff * k;
+      u.head.position.y = p.eating ? 1.3 + Math.sin(t * 18) * 0.04 : 1.55;
+      u.tail.rotation.z = Math.sin(t * 2 + u.phase) * 0.3;
+      if (u.mooT > 0 && (u.mooT -= dt) <= 0) u.sprite.material.map = u.nameTex;
+      // you can't walk through other players
+      const dx = player.pos.x - c.position.x, dz = player.pos.z - c.position.z, d = Math.hypot(dx, dz);
+      if (d < 1.6 && d > 0.001) { player.pos.x += dx / d * (1.6 - d); player.pos.z += dz / d * (1.6 - d); }
+    }
+  },
+};
+addEventListener('pagehide', () => { try { net.room?.leave(); } catch (e) {} });
+renderBoard(); loadBoard();
+
+// ---------- loop ----------
+const clock = new THREE.Clock();
+const fwd = new THREE.Vector3(), right = new THREE.Vector3(), step = new THREE.Vector3();
+function collide(p, r) {
+  const lim = FENCE - r; p.x = Math.max(-lim, Math.min(lim, p.x)); p.z = Math.max(-lim, Math.min(lim, p.z));
+  if (inBarn(p.x, p.z, r)) {
+    const dx = p.x - BARN.x, dz = p.z - BARN.z, ox = BARN.w / 2 + r - Math.abs(dx), oz = BARN.d / 2 + r - Math.abs(dz);
+    if (ox < oz) p.x += Math.sign(dx) * ox; else p.z += Math.sign(dz) * oz;
+  }
+  for (const [cx, cr] of [[BRUSH.x, BRUSH.r], [BRUSH.postX, BRUSH.postR]]) {
+    const dx = p.x - cx, dz = p.z - BRUSH.z, d = Math.hypot(dx, dz), min = r + cr;
+    if (d < min && d > 0.0001) { p.x += dx / d * (min - d); p.z += dz / d * (min - d); }
+  }
+  for (const b of bales) {
+    if (!b.visible) continue;
+    const dx = p.x - b.position.x, dz = p.z - b.position.z, d = Math.hypot(dx, dz), min = r + 0.75 * b.scale.x;
+    if (d < min && d > 0.0001) { p.x += dx / d * (min - d); p.z += dz / d * (min - d); }
+  }
+}
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+
+  // walk
+  let mx = 0, mz = 0;
+  if (playing && !player.eating) {
+    if (keys.has('KeyW') || keys.has('ArrowUp')) mz += 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) mz -= 1;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) mx -= 1;
+    mx += move.x; mz -= move.y;
+  }
+  const mag = Math.min(1, Math.hypot(mx, mz));
+  if (mag > 0.05) {
+    const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 7 : 3.6) * mag;
+    fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+    if (flat) { step.set(mx, 0, -mz).normalize().multiplyScalar(speed * dt); player.yaw = Math.atan2(-step.x, -step.z); }
+    else step.copy(fwd).multiplyScalar(mz).addScaledVector(right, mx).normalize().multiplyScalar(speed * dt);
+    player.pos.add(step);
+    player.bob += dt * speed * 2.2;
+  }
+  collide(player.pos, 0.8);
+  for (const c of herd) {
+    const dx = player.pos.x - c.position.x, dz = player.pos.z - c.position.z, d = Math.hypot(dx, dz);
+    if (d < 1.6 && d > 0.001) { player.pos.x += dx / d * (1.6 - d); player.pos.z += dz / d * (1.6 - d); }
+  }
+
+  // eat
+  let dip = 0;
+  if (player.eating) {
+    const b = player.eating; player.eatT += dt;
+    const k = Math.min(1, player.eatT / 1.3);
+    dip = Math.sin(k * Math.PI) * 0.35 + Math.sin(player.eatT * 18) * 0.03;
+    b.scale.setScalar(Math.max(0.05, 1 - k)); b.position.y = 0.75 * b.scale.x;
+    if (k >= 1) {
+      b.visible = false; b.userData.respawn = 20; player.eating = null;
+      hay += 1; localStorage.setItem(KEY, String(hay)); renderHud();
+      net.send({ t: 'eat' });
+      award('hay', hay % 10 === 0 ? hay + ' bales!' : 'nom. ' + usd(P) + ' hay payment made.');
+    }
+  }
+  for (const b of bales) if (!b.visible && (b.userData.respawn -= dt) <= 0) placeBale(b);
+  const near = playing && !player.eating && nearestBale();
+  promptEl.textContent = isTouch ? 'tap eat' : 'press e to eat hay';
+  promptEl.classList.toggle('show', !!near);
+
+  camera.position.set(player.pos.x, EYE - dip * 0.6 + Math.sin(player.bob) * 0.05, player.pos.z);
+  camera.rotation.set(player.pitch - dip, player.yaw, Math.sin(player.bob * 0.5) * 0.012);
+  snout.position.y = -0.5 + Math.sin(player.bob) * 0.015;
+
+  // herd wanders
+  for (const c of herd) {
+    const u = c.userData;
+    if (u.mooT > 0 && (u.mooT -= dt) <= 0) u.sprite.material.map = u.nameTex;
+    u.tail.rotation.z = Math.sin(t * 2 + u.phase) * 0.3;
+    if (!u.target) {
+      if ((u.wait -= dt) <= 0) { do u.target = randomSpot(); while (blocked(u.target.x, u.target.z, 2.5)); u.chk = null; }
+      u.head.position.y = 1.35 + Math.sin(t * 1.5 + u.phase) * 0.05; // grazing
+      if (Math.random() < dt * 0.02) cowMoo(c, 0.06);
+      continue;
+    }
+    const dx = u.target.x - c.position.x, dz = u.target.z - c.position.z, d = Math.hypot(dx, dz);
+    if (d < 0.5) { u.target = null; u.chk = null; u.wait = 3 + Math.random() * 8; continue; }
+    // unstick: walking for 2.5s without getting 0.5m anywhere means she's pinned, so turn around and head off somewhere open
+    if (!u.chk) u.chk = { x: c.position.x, z: c.position.z, t };
+    else if (Math.hypot(c.position.x - u.chk.x, c.position.z - u.chk.z) > 0.5) u.chk = { x: c.position.x, z: c.position.z, t };
+    else if (t - u.chk.t > 2.5) {
+      const back = c.rotation.y + Math.PI + (Math.random() - 0.5) * 1.2;
+      let tgt = null;
+      for (let i = 0; i < 20 && !tgt; i++) {
+        const dist = 6 + Math.random() * 8, x = c.position.x + Math.sin(back) * dist, z = c.position.z + Math.cos(back) * dist, lim = FENCE - 6;
+        if (Math.abs(x) < lim && Math.abs(z) < lim && !blocked(x, z, 2.5)) tgt = new THREE.Vector3(x, 0, z);
+      }
+      if (!tgt) do tgt = randomSpot(); while (blocked(tgt.x, tgt.z, 2.5));
+      u.target = tgt; c.rotation.y = back;
+      c.position.x += Math.sin(back) * 0.3; c.position.z += Math.cos(back) * 0.3; collide(c.position, 1.2);
+      u.chk = { x: c.position.x, z: c.position.z, t };
+      continue;
+    }
+    const want = Math.atan2(dx, dz);
+    let diff = want - c.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    c.rotation.y += diff * Math.min(1, dt * 2);
+    c.position.x += Math.sin(c.rotation.y) * u.speed * dt; c.position.z += Math.cos(c.rotation.y) * u.speed * dt;
+    collide(c.position, 1.2);
+    const pdx = c.position.x - player.pos.x, pdz = c.position.z - player.pos.z, pd = Math.hypot(pdx, pdz);
+    if (pd < 1.6 && pd > 0.001) { c.position.x += pdx / pd * (1.6 - pd); c.position.z += pdz / pd * (1.6 - pd); }
+    u.head.position.y = 1.55;
+    c.position.y = Math.abs(Math.sin(t * 6 + u.phase)) * 0.04;
+  }
+
+  // brush: touching it starts a scratch, it spins up, then coasts down
+  // generous: up against it from any side, or close and looking at it
+  const bx = BRUSH.x - player.pos.x, bz = BRUSH.z - player.pos.z, bd = Math.hypot(bx, bz);
+  const facing = (-Math.sin(player.yaw) * bx - Math.cos(player.yaw) * bz) / Math.max(bd, 0.001) > 0.8;
+  const touching = playing && (bd < 2.2 || (bd < 3.2 && facing));
+  if (touching && !BRUSH.touching && t - BRUSH.lastTouch > 2.5) {
+    brushed += 1; localStorage.setItem(BKEY, String(brushed));
+    freshUntil = performance.now() + 20000; renderHud();
+    brushSound();
+    net.send({ t: 'brush' });
+    if (performance.now() - lastBrushPts > 20000) { lastBrushPts = performance.now(); award('brush', 'ahh. freshly brushed.'); }
+    else toast('ahh. freshly brushed', 1600);
+  }
+  if (touching) BRUSH.lastTouch = t;
+  BRUSH.touching = touching;
+  const want = t - BRUSH.lastTouch < 1.5 ? 9 : 0;
+  BRUSH.spin += (want - BRUSH.spin) * Math.min(1, dt * (want ? 3 : 0.8));
+  brush.rotation.y += BRUSH.spin * dt;
+  brush.children[1].position.x = touching ? Math.sin(t * 40) * 0.015 : 0; // bristles shake against your side
+  if (freshUntil && performance.now() > freshUntil) { freshUntil = 0; renderHud(); }
+
+  // other players' cows glide toward their last synced spot
+  net.tick(dt, t);
+  if (performance.now() - (net.lastPush ?? 0) > 100) { net.lastPush = performance.now(); net.pushState(); }
+  // whole herd at the brush (2+ cows online, all within 6m): +10, once a minute
+  if (playing && net.peers.size >= 1 && performance.now() - lastHerdUp > 60000) {
+    const near = (x, z) => Math.hypot(x - BRUSH.x, z - BRUSH.z) < 6;
+    if (near(player.pos.x, player.pos.z) && [...net.peers.values()].every(p => near(p.x, p.z))) { lastHerdUp = performance.now(); award('herd', 'herd up at the brush!'); }
+  }
+
+  for (const c of clouds) { c.position.x += dt * 1.2; if (c.position.x > 200) c.position.x = -200; }
+
+  renderer.render(scene, camera);
+  nextFrame();
+}
+// hidden tabs (headless bot browsers report hidden) never fire animation frames and throttle page timers to 1/s,
+// so there the loop ticks from a tiny worker, whose timers keep running
+let frameGen = 0, frameQueued = false, ticker = null, tickRun = null;
+function nextFrame() {
+  if (frameQueued) return;
+  frameQueued = true;
+  const gen = frameGen, run = () => { if (gen !== frameGen) return; frameQueued = false; frame(); };
+  if (!document.hidden) { requestAnimationFrame(run); return; }
+  if (!ticker) {
+    try {
+      ticker = new Worker(URL.createObjectURL(new Blob(['onmessage = () => setTimeout(() => postMessage(0), 33)'], { type: 'text/javascript' })));
+      ticker.onmessage = () => { const r = tickRun; tickRun = null; r?.(); };
+    } catch (e) { ticker = false; }
+  }
+  if (ticker) { tickRun = run; ticker.postMessage(0); } else setTimeout(run, 33);
+}
+document.addEventListener('visibilitychange', () => { frameGen++; frameQueued = false; nextFrame(); });
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+window.cow1 = { player, bales, herd, brush: BRUSH, net, board: () => board, flat }; // handy for poking at from the console
+frame();
+</script>
+</body>
+</html>
