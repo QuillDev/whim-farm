@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { type Seg, spawnBison, stepBison } from "./bison.ts";
 
 // The server decides what each action is worth and how often it can pay out,
 // so a client can only claim actions, never a score. It also keeps where each
@@ -72,6 +73,7 @@ function db(): DatabaseSync {
       primary key (room, name, kind));
     create table if not exists moos (room text not null, name text not null, at integer not null);
     create index if not exists moos_room_at on moos (room, at);
+    create table if not exists bison (room text primary key, seg text not null);
   `);
   g.whimFarmDb = d;
   return d;
@@ -141,7 +143,7 @@ export function startSession(nameIn: unknown, roomIn: unknown, keyIn: unknown) {
     bale.run(id, i, s.x, s.z);
   }
   d.prepare("insert into scores values (?, ?, 0) on conflict do nothing").run(room, name);
-  return { session: id, name, room, key, pts: ptsOf(room, name), ...SPAWN, bales: balesOf(id, now) };
+  return { session: id, name, room, key, pts: ptsOf(room, name), ...SPAWN, bales: balesOf(id, now), now, bison: bisonOf(room, now) };
 }
 
 type Cow = { session: string; room: string; name: string; x: number; z: number; at: number; seq: number; seen: number };
@@ -210,7 +212,7 @@ export function move(sessionId: unknown, seq: unknown, x: unknown, z: unknown) {
   const now = Date.now();
   const clamped = takeSeq(cow, seq) ? walk(cow, x, z, now) : false;
   save(cow);
-  return { x: cow.x, z: cow.z, clamped, bales: balesOf(cow.session, now) };
+  return { x: cow.x, z: cow.z, clamped, bales: balesOf(cow.session, now), now, bison: bisonOf(cow.room, now) };
 }
 
 function liveCows(room: string) {
@@ -319,4 +321,15 @@ export function board(roomIn: unknown, sessionId?: unknown) {
     .prepare("select name, pts from scores where room = ? order by pts desc, name limit ?")
     .all(room, BOARD_SIZE) as { name: string; pts: number }[];
   return { room, live: liveCows(room), board: rows.map((r) => ({ name: r.name, pts: r.pts })) };
+}
+
+// BISON1: no points either way, she just makes the pasture livelier. see lib/bison.ts
+const WORLD = { limit: LIMIT, barn: BARN, brush: BRUSH, spawn: SPAWN };
+function bisonOf(room: string, now: number): Seg {
+  const d = db();
+  const row = d.prepare("select seg from bison where room = ?").get(room) as { seg: string } | undefined;
+  const before = row ? (JSON.parse(row.seg) as Seg) : spawnBison(WORLD, now);
+  const seg = stepBison(WORLD, before, now, cowsOnline(room, now));
+  if (!row || seg !== before) d.prepare("insert into bison values (?, ?) on conflict do update set seg = excluded.seg").run(room, JSON.stringify(seg));
+  return seg;
 }

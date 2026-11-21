@@ -163,3 +163,47 @@ test("cheats are refused and score nothing", async () => {
     { name: "pal", pts: 0 },
   ]);
 });
+
+type Seg = { mode: string; x0: number; z0: number; dx: number; dz: number; speed: number; t0: number; t1: number; target?: string; charge?: Seg };
+const bisonAt = (b: Seg, t: number) => {
+  const k = (b.speed * (Math.min(Math.max(t, b.t0), b.t1) - b.t0)) / 1000;
+  return { x: b.x0 + b.dx * k, z: b.z0 + b.dz * k };
+};
+
+test("BISON1 notices a cow, snorts at her, then charges slower than a trot; every cow sees the same bison", async () => {
+  const bold = await cow("bold", "test-bison");
+  const watcher = await cow("watcher", "test-bison");
+  let seen: Seg | undefined;
+  for (let i = 0; i < 120 && !seen; i++) {
+    tick(1000);
+    const r = (await post(move, { session: bold.session, seq: ++bold.seq, x: bold.x, z: bold.z })).body;
+    if (r.bison.mode === "snort") seen = r.bison;
+    else {
+      // amble toward her, stopping 6m short, at a walk
+      const p = bisonAt(r.bison, r.now), d = Math.hypot(p.x - bold.x, p.z - bold.z);
+      if (d > 6) [bold.x, bold.z] = [bold.x + ((p.x - bold.x) * Math.min(3, d - 6)) / d, bold.z + ((p.z - bold.z) * Math.min(3, d - 6)) / d];
+    }
+  }
+  assert.ok(seen, "she snorted");
+  assert.equal(seen.target, "bold");
+  assert.equal(seen.charge?.mode, "charge");
+  assert.equal(seen.charge?.t0, seen.t1);
+  assert.ok(seen.charge!.speed < 7, "a trotting cow outruns her");
+  assert.ok(seen.t1 - seen.t0 >= 1000, "the charge is telegraphed");
+  const w = (await post(move, { session: watcher.session, seq: ++watcher.seq, x: watcher.x, z: watcher.z })).body;
+  assert.deepEqual(w.bison, seen);
+  // after the charge she rests and calms down before picking anyone again
+  tick(seen.charge!.t1 - seen.t0 + 1500);
+  const after = (await post(move, { session: bold.session, seq: ++bold.seq, x: bold.x, z: bold.z })).body.bison;
+  assert.notEqual(after.mode, "snort");
+});
+
+test("BISON1 never picks a cow standing at the brush", async () => {
+  const safe = await cow("safe", "test-bison-safe");
+  await safe.walkTo(BRUSH.x, BRUSH.z + 2);
+  for (let i = 0; i < 300; i++) {
+    tick(1000);
+    const b = (await post(move, { session: safe.session, seq: ++safe.seq, x: safe.x, z: safe.z })).body.bison;
+    assert.notEqual(b.mode, "snort");
+  }
+});

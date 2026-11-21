@@ -90,6 +90,7 @@
       <p class="desk">wasd or arrows walk, mouse looks (or drag), shift trots, e eats hay, space or m moos.</p>
       <p class="touch">left stick walks, drag looks, buttons eat and moo.</p>
       <p>points: hay bale +2. cow brush +5 (walk into it, once per 20s). moo chorus: moo within 2s of another cow's moo for +2 per cow in the chorus. whole herd at the brush +10.</p>
+      <p>watch out for BISON1, cow1's cousin. if she snorts at you, trot away (shift). a hit bonks you for 2s but never costs points. the brush and the spawn are safe ground.</p>
       <p>points only go up. the board is all-time.</p>
     </div>
   </div>
@@ -133,7 +134,7 @@ async function startSession() {
   const s = await api('session', { name: myName, room: ROOM, key: localStorage.getItem(KEY_PREFIX + myName) || '' });
   localStorage.setItem(KEY_PREFIX + myName, s.key);
   session = s.session; seq = 0; board[myName] = { pts: s.pts };
-  player.pos.set(s.x, 0, s.z); syncBales(s.bales);
+  player.pos.set(s.x, 0, s.z); syncBales(s.bales); syncBison(s.bison, s.now);
 }
 // every request says where this cow is and carries the next number, so the server can check it
 const report = (path, body) => api(path, { session, seq: ++seq, x: +player.pos.x.toFixed(2), z: +player.pos.z.toFixed(2), ...body });
@@ -194,6 +195,26 @@ function crunchSound() {
   } catch (e) {}
 }
 
+function snortSound(vol = 0.3) {
+  try {
+    const ctx = audio(), t = ctx.currentTime;
+    for (const [at, dur] of [[0, 0.35], [0.45, 0.5]]) {
+      const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate), d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 1.5);
+      const n = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      n.buffer = buf; f.type = 'lowpass'; f.frequency.value = 700; g.gain.value = vol;
+      n.connect(f); f.connect(g); g.connect(ctx.destination); n.start(t + at);
+    }
+  } catch (e) {}
+}
+function bonkSound() {
+  try {
+    const ctx = audio(), t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle'; o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.3);
+    g.gain.setValueAtTime(0.4, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.36);
+  } catch (e) {}
+}
 function brushSound() {
   try {
     const ctx = audio(), t = ctx.currentTime, dur = 1.6;
@@ -247,6 +268,7 @@ function makeMapRenderer() {
     dot(X(BRUSH.x), Y(BRUSH.z), BRUSH.r * k + 2, '#2f9a45', '#1d6e30');
     tag(X(BRUSH.x), Y(BRUSH.z) - BRUSH.r * k, 'brush', '#cdeccf');
     for (const c of herd) { dot(X(c.position.x), Y(c.position.z), 0.8 * k, '#fbfbf7', '#2b2a28'); tag(X(c.position.x), Y(c.position.z) - 0.8 * k, c.userData.mooT > 0 ? 'moo!' : c.userData.name); }
+    if (bison.seg) { const snorting = bisonSeg(serverNow())?.mode === 'snort'; dot(X(bison.x), Y(bison.z), 1.4 * k, '#4a2f1d', snorting ? '#ff8a65' : '#1f1611'); tag(X(bison.x), Y(bison.z) - 1.4 * k, snorting ? 'BISON1 snort!' : 'BISON1', '#d9b38c'); }
     for (const p of net.peers.values()) { const c = p.cow; dot(X(c.position.x), Y(c.position.z), 0.9 * k, '#fbfbf7', '#2f8a3c'); tag(X(c.position.x), Y(c.position.z) - 0.9 * k, c.userData.mooT > 0 ? p.name + ': moo!' : p.name, '#e7f5e4'); }
     // you: a pink arrow pointing where you face
     const px = X(player.pos.x), py = Y(player.pos.z), a = player.yaw, s = Math.max(10, 1.5 * k);
@@ -464,6 +486,57 @@ for (let i = 2; i <= 6; i++) {
   Object.assign(c.userData, { target: null, wait: Math.random() * 3, speed: 1 + Math.random() * 0.6, mooTex: null, mooT: 0, phase: Math.random() * 6 });
   herd.push(c); scene.add(c);
 }
+// ---------- BISON1: the server plans her moves (straight timed segments), every page draws the same ones ----------
+function makeBison() {
+  const b = new THREE.Group();
+  const dark = mat('#4a2f1d'), shag = mat('#6b4428'), shag2 = mat('#3a2416'), hornM = mat('#d9ccb0'), nose = mat('#1f1611');
+  const body = box(1.6, 1.3, 2.8, dark); body.position.set(0, 1.35, -0.2); b.add(body);
+  const hump = box(1.9, 1.3, 1.6, shag); hump.position.set(0, 2.05, 0.55); hump.rotation.x = -0.15; b.add(hump);
+  const mane = box(2.0, 1.5, 1.2, shag2); mane.position.set(0, 1.45, 0.85); b.add(mane);
+  for (let i = 0; i < 6; i++) { const t = box(0.5, 0.4, 0.5, i % 2 ? shag : shag2); t.position.set((Math.random() - .5) * 1.6, 2.4 + Math.random() * 0.4, 0.1 + Math.random() * 1.1); t.rotation.y = Math.random(); b.add(t); }
+  for (const [x, z] of [[-.5, 1.0], [.5, 1.0], [-.5, -1.2], [.5, -1.2]]) {
+    const l = box(0.34, 0.8, 0.34, dark); l.position.set(x, 0.4, z); b.add(l);
+    if (z > 0) { const f = box(0.46, 0.45, 0.46, shag); f.position.set(x, 0.7, z); b.add(f); }
+  }
+  const head = new THREE.Group(); head.position.set(0, 1.15, 1.75); b.add(head);
+  head.add(box(0.95, 0.95, 0.85, shag2));
+  const muzzle = box(0.75, 0.5, 0.35, nose); muzzle.position.set(0, -0.25, 0.5); head.add(muzzle);
+  const beard = box(0.6, 0.55, 0.4, shag); beard.position.set(0, -0.65, 0.15); head.add(beard);
+  for (const sg of [-1, 1]) {
+    const e = box(0.08, 0.1, 0.02, mat('#0d0a08')); e.position.set(sg * 0.3, 0.1, 0.43); head.add(e);
+    const h1 = box(0.32, 0.14, 0.14, hornM); h1.position.set(sg * 0.58, 0.36, 0); head.add(h1);
+    const h2 = box(0.12, 0.26, 0.12, hornM); h2.position.set(sg * 0.72, 0.52, 0); h2.rotation.z = -sg * 0.3; head.add(h2);
+  }
+  const tail = box(0.1, 0.7, 0.1, dark); tail.position.set(0, 1.4, -1.65); tail.rotation.x = 0.25; b.add(tail);
+  const nameTex = label('BISON1', '#d9b38c'), snortTex = label('snort!', '#ff8a65');
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTex, depthWrite: false }));
+  sprite.scale.set(1.8, 0.66, 1); sprite.position.y = 3.4; b.add(sprite);
+  b.userData = { head, tail, sprite, nameTex, snortTex };
+  b.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return b;
+}
+const BISON_R = 1.6; // her body, for bumping
+const bison = { seg: null, offset: 0, model: makeBison(), x: 28, z: -22, snorted: 0, hitCharge: 0, seen: false };
+bison.model.visible = false;
+scene.add(bison.model);
+const serverNow = () => Date.now() + bison.offset;
+const segAt = (s, t) => { const k = s.speed * (Math.min(Math.max(t, s.t0), s.t1) - s.t0) / 1000; return { x: s.x0 + s.dx * k, z: s.z0 + s.dz * k }; };
+function syncBison(seg, now) {
+  if (!seg || !Number.isFinite(now)) return;
+  const off = now - Date.now();
+  bison.offset = bison.seen ? bison.offset * 0.7 + off * 0.3 : off;
+  bison.seg = seg; bison.seen = true;
+}
+// the plan in hand may be over; a snort carries its charge, so pages can play it before they hear back
+function bisonSeg(t) {
+  let s = bison.seg;
+  if (s && t >= s.t1 && s.mode === 'snort' && s.charge) s = s.charge;
+  return s;
+}
+const SAFE = [[BRUSH.x, BRUSH.z], [0, 14]];
+const onSafeGround = (x, z) => SAFE.some(([sx, sz]) => Math.hypot(x - sx, z - sz) < 7);
+const knock = { vx: 0, vz: 0, until: 0, stunUntil: 0 };
+
 const randomSpot = (m = 6) => new THREE.Vector3((Math.random() * 2 - 1) * (FENCE - m), 0, (Math.random() * 2 - 1) * (FENCE - m));
 const inBarn = (x, z, pad) => Math.abs(x - BARN.x) < BARN.w / 2 + pad && Math.abs(z - BARN.z) < BARN.d / 2 + pad;
 const nearBrush = (x, z, pad) => Math.hypot(x - BRUSH.x, z - BRUSH.z) < BRUSH.r + pad || Math.hypot(x - BRUSH.postX, z - BRUSH.z) < BRUSH.postR + pad;
@@ -898,7 +971,8 @@ function frame() {
 
   // walk
   let mx = 0, mz = 0;
-  if (playing && !player.eating) {
+  const stunned = performance.now() < knock.stunUntil;
+  if (playing && !player.eating && !stunned) {
     if (keys.has('KeyW') || keys.has('ArrowUp')) mz += 1;
     if (keys.has('KeyS') || keys.has('ArrowDown')) mz -= 1;
     if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
@@ -984,6 +1058,56 @@ function frame() {
     c.position.y = Math.abs(Math.sin(t * 6 + u.phase)) * 0.04;
   }
 
+  // BISON1
+  const bs = bisonSeg(serverNow());
+  if (bs) {
+    const bm = bison.model, u = bm.userData, sn = serverNow(), p = segAt(bs, sn);
+    // glide over the small jump when a fresher plan arrives; a charge is drawn exactly
+    if (!bm.visible || bs.mode === 'charge') { bison.x = p.x; bison.z = p.z; }
+    else { const k = Math.min(1, dt * 8); bison.x += (p.x - bison.x) * k; bison.z += (p.z - bison.z) * k; }
+    p.x = bison.x; p.z = bison.z; bm.visible = true;
+    bm.position.set(p.x, 0, p.z);
+    let want = Math.atan2(bs.dx, bs.dz), diff = want - bm.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    bm.rotation.y += diff * Math.min(1, dt * (bs.mode === 'snort' ? 8 : 3));
+    const moving = bs.speed > 0 && sn < bs.t1;
+    bm.position.y = moving ? Math.abs(Math.sin(t * (bs.mode === 'charge' ? 14 : 5))) * (bs.mode === 'charge' ? 0.12 : 0.04) : 0;
+    u.tail.rotation.z = Math.sin(t * 3) * 0.35;
+    if (bs.mode === 'snort') {
+      u.head.position.y = 1.0 + Math.abs(Math.sin(t * 10)) * 0.08; u.head.rotation.y = Math.sin(t * 16) * 0.12;
+      u.sprite.material.map = u.snortTex;
+      if (bison.snorted !== bs.t0) {
+        bison.snorted = bs.t0;
+        const d = Math.hypot(p.x - player.pos.x, p.z - player.pos.z);
+        if (d < 35) snortSound(Math.max(0.05, 0.35 - d / 120));
+        if (bs.target === myName && playing) toast('BISON1 is snorting at you. trot! (shift)', 1500);
+      }
+    } else { u.head.position.y = bs.mode === 'charge' ? 0.95 : 1.15; u.head.rotation.y = 0; u.sprite.material.map = u.nameTex; }
+    // a charge that reaches you knocks you along her path and leaves you dizzy for 2s. no points change.
+    if (playing && bs.mode === 'charge' && sn < bs.t1 && bison.hitCharge !== bs.t0 && !stunned && !onSafeGround(player.pos.x, player.pos.z)) {
+      const dx = player.pos.x - p.x, dz = player.pos.z - p.z, d = Math.hypot(dx, dz);
+      if (d < BISON_R + 0.8) {
+        bison.hitCharge = bs.t0;
+        const side = (dx * bs.dz - dz * bs.dx) >= 0 ? 1 : -1; // shove her off to whichever side she was on
+        knock.vx = (bs.dx + bs.dz * side * 0.8) * 9; knock.vz = (bs.dz - bs.dx * side * 0.8) * 9;
+        knock.until = performance.now() + 400; knock.stunUntil = performance.now() + 2000;
+        player.eating = null; keys.clear();
+        bonkSound(); toast('bonked by BISON1', 2000);
+      }
+    }
+    // bumping into her (or her into you) pushes you aside, never through her
+    const pdx = player.pos.x - p.x, pdz = player.pos.z - p.z, pd = Math.hypot(pdx, pdz);
+    if (pd < BISON_R + 0.8 && pd > 0.001) { player.pos.x += pdx / pd * (BISON_R + 0.8 - pd); player.pos.z += pdz / pd * (BISON_R + 0.8 - pd); }
+    // npc cows step aside too, and the usual fence/barn/brush pushes keep them out of gaps
+    for (const c of herd) {
+      const cx = c.position.x - p.x, cz = c.position.z - p.z, cd = Math.hypot(cx, cz);
+      if (cd < BISON_R + 1.2 && cd > 0.001) { c.position.x += cx / cd * (BISON_R + 1.2 - cd); c.position.z += cz / cd * (BISON_R + 1.2 - cd); collide(c.position, 1.2); }
+    }
+  }
+  if (performance.now() < knock.until) {
+    player.pos.x += knock.vx * dt; player.pos.z += knock.vz * dt; collide(player.pos, 0.8);
+  }
+  if (stunned) { camera.rotation.z += Math.sin(t * 9) * 0.04; }
+
   // brush: touching it starts a scratch, it spins up, then coasts down
   // generous: up against it from any side, or close and looking at it
   const bx = BRUSH.x - player.pos.x, bz = BRUSH.z - player.pos.z, bd = Math.hypot(bx, bz);
@@ -1009,9 +1133,11 @@ function frame() {
   net.tick(dt, t);
   if (performance.now() - (net.lastPush ?? 0) > 100) { net.lastPush = performance.now(); net.pushState(); }
   // tell the server where we are once a second; it only pays for things a cow could have walked to
-  if (playing && session && performance.now() - lastReport > 1000) {
+  // twice as often while BISON1 is close, so her snort shows up quickly on every page
+  const bisonNear = bison.seg && Math.hypot(bison.x - player.pos.x, bison.z - player.pos.z) < 25;
+  if (playing && session && performance.now() - lastReport > (bisonNear ? 500 : 1000)) {
     lastReport = performance.now();
-    report('move').then(d => syncBales(d.bales)).catch(e => { if (e.status === 404) { session = null; startSession().catch(() => {}); } });
+    report('move').then(d => { syncBales(d.bales); syncBison(d.bison, d.now); }).catch(e => { if (e.status === 404) { session = null; startSession().catch(() => {}); } });
   }
   // whole herd at the brush (2+ cows online, all within 6m): +10, once a minute
   if (playing && net.peers.size >= 1 && performance.now() - lastHerdUp > 60000) {
@@ -1042,7 +1168,7 @@ function nextFrame() {
 }
 document.addEventListener('visibilitychange', () => { frameGen++; frameQueued = false; nextFrame(); });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-window.cow1 = { player, bales, herd, brush: BRUSH, net, board: () => board, flat }; // handy for poking at from the console
+window.cow1 = { player, bales, herd, brush: BRUSH, net, board: () => board, flat, bison, knock, serverNow }; // handy for poking at from the console
 frame();
 </script>
 </body>
