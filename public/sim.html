@@ -50,9 +50,12 @@
   .is-touch .cross, .is-touch .desk { display: none; }
   .stick { position: fixed; left: 24px; bottom: 24px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,253,247,.35); border: 3px solid rgba(43,42,40,.6); }
   .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: var(--paper); border: 3px solid var(--ink); }
-  .tbtns { position: fixed; right: 20px; bottom: 28px; display: flex; flex-direction: column; gap: 12px; }
+  .tbtns { position: fixed; right: 20px; bottom: 28px; display: grid; grid-template-columns: auto auto; gap: 12px; }
   .tbtns button { margin: 0; min-width: 84px; }
   .tbtns #tmoo { background: #fff; }
+  .tbtns #ttrot { grid-row: span 2; background: #ff8a65; }
+  .tbtns #ttrot.on { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+  @media (max-width: 560px) { .toast { font-size: 1.1rem; white-space: normal; width: max-content; max-width: 88vw; text-align: center; } }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
@@ -74,6 +77,7 @@
 <div class="touch">
   <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
   <div class="tbtns">
+    <button id="ttrot" type="button">trot</button>
     <button id="teat" type="button">eat</button>
     <button id="tmoo" type="button">moo</button>
   </div>
@@ -88,9 +92,9 @@
     <button id="join" type="button">join the herd</button>
     <div class="howto">
       <p class="desk">wasd or arrows walk, mouse looks (or drag), shift trots, e eats hay, space or m moos.</p>
-      <p class="touch">left stick walks, drag looks, buttons eat and moo.</p>
+      <p class="touch">left stick walks, hold trot to run, drag looks, buttons eat and moo.</p>
       <p>points: hay bale +2. cow brush +5 (walk into it, once per 20s). moo chorus: moo within 2s of another cow's moo for +2 per cow in the chorus. whole herd at the brush +10.</p>
-      <p>watch out for BISON1, cow1's cousin. if she snorts at you, trot away (shift). a hit bonks you for 2s but never costs points. the brush and the spawn are safe ground.</p>
+      <p>watch out for BISON1, cow1's cousin. if she snorts, her charge lane lights up on the ground. trot out of it (shift, or hold trot). a hit bonks you for 2s but never costs points. the brush and the spawn are safe ground.</p>
       <p>points only go up. the board is all-time.</p>
     </div>
   </div>
@@ -270,6 +274,13 @@ function makeMapRenderer() {
     for (const c of herd) { dot(X(c.position.x), Y(c.position.z), 0.8 * k, '#fbfbf7', '#2b2a28'); tag(X(c.position.x), Y(c.position.z) - 0.8 * k, c.userData.mooT > 0 ? 'moo!' : c.userData.name); }
     if (bison.seg) { const snorting = bisonSeg(serverNow())?.mode === 'snort'; dot(X(bison.x), Y(bison.z), 1.4 * k, '#4a2f1d', snorting ? '#ff8a65' : '#1f1611'); tag(X(bison.x), Y(bison.z) - 1.4 * k, snorting ? 'BISON1 snort!' : 'BISON1', '#d9b38c'); }
     for (const p of net.peers.values()) { const c = p.cow; dot(X(c.position.x), Y(c.position.z), 0.9 * k, '#fbfbf7', '#2f8a3c'); tag(X(c.position.x), Y(c.position.z) - 0.9 * k, c.userData.mooT > 0 ? p.name + ': moo!' : p.name, '#e7f5e4'); }
+    const ls = bisonSeg(serverNow());
+    if (ls?.mode === 'snort' && ls.charge) {
+      const c = ls.charge, len = c.speed * (c.t1 - c.t0) / 1000, w = (BISON_R + 0.8) * k, ex = X(c.x0 + c.dx * len), ey = Y(c.z0 + c.dz * len), nx = -c.dz * w, ny = c.dx * w;
+      g.globalAlpha = 0.6 + 0.2 * Math.sin(performance.now() / 90);
+      g.beginPath(); g.moveTo(X(c.x0) + nx, Y(c.z0) + ny); g.lineTo(ex + nx, ey + ny); g.lineTo(ex + c.dx * w, ey + c.dz * w); g.lineTo(ex - nx, ey - ny); g.lineTo(X(c.x0) - nx, Y(c.z0) - ny); g.closePath();
+      g.fillStyle = '#ff5a36'; g.fill(); g.globalAlpha = 1; g.lineWidth = 2; g.strokeStyle = '#b3261e'; g.stroke();
+    }
     // you: a pink arrow pointing where you face
     const px = X(player.pos.x), py = Y(player.pos.z), a = player.yaw, s = Math.max(10, 1.5 * k);
     g.beginPath();
@@ -516,6 +527,10 @@ function makeBison() {
   return b;
 }
 const BISON_R = 1.6; // her body, for bumping
+// her charge lane, lit on the ground for the snort: as wide as a hit, as long as the run
+const laneGeo = new THREE.PlaneGeometry(1, 1); laneGeo.rotateX(-Math.PI / 2); laneGeo.translate(0, 0, 0.5);
+const lane = new THREE.Mesh(laneGeo, new THREE.MeshBasicMaterial({ color: '#ff3b1f', transparent: true, opacity: 0.7, depthWrite: false }));
+lane.visible = false; scene.add(lane);
 const bison = { seg: null, offset: 0, model: makeBison(), x: 28, z: -22, snorted: 0, hitCharge: 0, seen: false };
 bison.model.visible = false;
 scene.add(bison.model);
@@ -715,6 +730,13 @@ addEventListener('touchend', e => {
     if (t.identifier === lookId) lookId = null;
   }
 });
+// trot: held like shift, same speed
+const trotBtn = document.getElementById('ttrot');
+let trotHeld = false;
+const setTrot = on => { trotHeld = on; trotBtn.classList.toggle('on', on); };
+trotBtn.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); setTrot(true); }, { passive: false });
+trotBtn.addEventListener('touchend', e => { e.preventDefault(); setTrot(false); });
+trotBtn.addEventListener('touchcancel', () => setTrot(false));
 document.getElementById('tmoo').addEventListener('click', () => playing && moo());
 document.getElementById('teat').addEventListener('click', () => playing && tryEat());
 
@@ -981,7 +1003,7 @@ function frame() {
   }
   const mag = Math.min(1, Math.hypot(mx, mz));
   if (mag > 0.05) {
-    const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 7 : 3.6) * mag;
+    const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') || trotHeld ? 7 : 3.6) * mag;
     fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
     if (flat) { step.set(mx, 0, -mz).normalize().multiplyScalar(speed * dt); player.yaw = Math.atan2(-step.x, -step.z); }
@@ -1072,6 +1094,13 @@ function frame() {
     const moving = bs.speed > 0 && sn < bs.t1;
     bm.position.y = moving ? Math.abs(Math.sin(t * (bs.mode === 'charge' ? 14 : 5))) * (bs.mode === 'charge' ? 0.12 : 0.04) : 0;
     u.tail.rotation.z = Math.sin(t * 3) * 0.35;
+    lane.visible = bs.mode === 'snort' && !!bs.charge;
+    if (lane.visible) {
+      const c = bs.charge;
+      lane.position.set(c.x0, 0.04, c.z0); lane.rotation.y = Math.atan2(c.dx, c.dz);
+      lane.scale.set((BISON_R + 0.8) * 2, 1, Math.max(0.1, c.speed * (c.t1 - c.t0) / 1000));
+      lane.material.opacity = 0.65 + 0.2 * Math.sin(t * 14);
+    }
     if (bs.mode === 'snort') {
       u.head.position.y = 1.0 + Math.abs(Math.sin(t * 10)) * 0.08; u.head.rotation.y = Math.sin(t * 16) * 0.12;
       u.sprite.material.map = u.snortTex;
@@ -1079,7 +1108,7 @@ function frame() {
         bison.snorted = bs.t0;
         const d = Math.hypot(p.x - player.pos.x, p.z - player.pos.z);
         if (d < 35) snortSound(Math.max(0.05, 0.35 - d / 120));
-        if (bs.target === myName && playing) toast('BISON1 is snorting at you. trot! (shift)', 1500);
+        if (bs.target === myName && playing) toast(isTouch ? 'BISON1 is snorting at you. trot!' : 'BISON1 is snorting at you. trot! (shift)', 1500);
       }
     } else { u.head.position.y = bs.mode === 'charge' ? 0.95 : 1.15; u.head.rotation.y = 0; u.sprite.material.map = u.nameTex; }
     // a charge that reaches you knocks you along her path and leaves you dizzy for 2s. no points change.
@@ -1090,7 +1119,7 @@ function frame() {
         const side = (dx * bs.dz - dz * bs.dx) >= 0 ? 1 : -1; // shove her off to whichever side she was on
         knock.vx = (bs.dx + bs.dz * side * 0.8) * 9; knock.vz = (bs.dz - bs.dx * side * 0.8) * 9;
         knock.until = performance.now() + 400; knock.stunUntil = performance.now() + 2000;
-        player.eating = null; keys.clear();
+        player.eating = null; keys.clear(); setTrot(false);
         bonkSound(); toast('bonked by BISON1', 2000);
       }
     }
